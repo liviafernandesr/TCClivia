@@ -20,7 +20,7 @@ except:
 # Define o caminho dos cookies salvos, o número máximo de produtos a extrair e o link da categoria.
 COOKIES_PATH = "cookies_amazon.pkl"
 MAX_PRODUTOS = 5
-CATEGORIA_URL = "https://www.amazon.com.br/gp/bestsellers/appliances"
+CATEGORIA_URL = "https://www.amazon.com.br/gp/bestsellers/electronics/16243890011"
 
 def carregar_cookies(driver):
     with open(COOKIES_PATH, "rb") as file:
@@ -59,10 +59,7 @@ def extrair_asin_dos_produtos(driver):
     links_produtos = soup.select('a[href*="/dp/"]')
     
     for link in links_produtos:
-        if len(asins) >= MAX_PRODUTOS:
-            break
-        
-        href = link.get('href')
+        href = link.get('href', '')
         
         # Usa regex para extrair o ASIN de 10 caracteres do URL
         match = re.search(r'/dp/([A-Z0-9]{10})', href)
@@ -119,9 +116,7 @@ def extrair_detalhes_produto(driver, asin):
     nome_produto_tag = soup.select_one('#productTitle')
     nome_produto = nome_produto_tag.get_text(strip=True) if nome_produto_tag else "Nome não encontrado"
 
-    # ==============================================================================
     # PREÇO MODIFICADO PARA RETORNAR APENAS O VALOR NUMÉRICO
-    # ==============================================================================
     preco_tag = soup.select_one('span.a-price span.a-offscreen')
     preco = preco_tag.get_text(strip=True).replace("R$", "").replace(".", "").strip() if preco_tag else "Preço não disponível"
 
@@ -136,28 +131,48 @@ def extrair_comentarios(html, asin, nome_produto, preco, nota_geral):
     soup = BeautifulSoup(html, 'html.parser')
     comentarios = []
 
-    blocos = soup.find_all("div", {"data-hook": "review"})
+    # 1. Busca FORÇADA pelos blocos de comentários no elemento <li> com data-hook="review".
+    blocos = soup.find_all("li", {"data-hook": "review"}) 
+    
+    # Se, por algum motivo, o <li> for pulado, o fallback para a <div> interna com ID é mantido.
     if not blocos:
         blocos = soup.find_all("div", id=lambda x: x and x.startswith("customer_review-"))
+        
+    if not blocos:
+        print("Aviso: Nenhum bloco de comentário principal encontrado com os seletores esperados.")
+        return []
 
     for bloco in blocos:
-        texto = bloco.select_one("span[data-hook='review-body'] span")
-        nota = bloco.select_one("i[data-hook='review-star-rating'] span") or \
-               bloco.select_one("i[data-hook='cmps-review-star-rating'] span")
+        # 2. Extrai a Nota (Tag <i> com data-hook='review-star-rating' e o <span> dentro)
+        nota_tag = bloco.select_one("i[data-hook='review-star-rating'] span")
+
+        # 3. Extrai o Corpo do Texto.
+        # O seletor mais seguro é a <span> dentro da div 'review-collapsed'.
+        # Se for um comentário curto (sem 'Ler mais'), ele estará no span direto no 'review-body'.
+        texto_container = bloco.select_one("div[data-hook='review-collapsed'] span")
+        
+        # Fallback para textos curtos sem o div de expander
+        if not texto_container:
+            texto_container = bloco.select_one("span[data-hook='review-body'] span")
+            
+        # 4. Extrai a Data
         data_tag = bloco.select_one("span[data-hook='review-date']")
 
-        # Chama a nova função que retorna país e data
-        pais, data_formatada = formatar_data_e_pais_amazon(data_tag.get_text(strip=True)) if data_tag else ("N/A", "N/D")
+        # Garante que a data está presente antes de tentar processar
+        data_str = data_tag.get_text(strip=True) if data_tag else "N/D"
+        pais, data_formatada = formatar_data_e_pais_amazon(data_str)
 
+        # Adiciona o comentário
         comentarios.append({
             "ASIN": asin,
             "Nome": nome_produto,
             "Preço": preco,
             "Nota Geral": nota_geral,
-            "País": pais,  # Nova coluna
+            "País": pais, 
             "Data Comentário": data_formatada,
-            "Nota": nota.get_text(strip=True).split()[0].replace(",",",") if nota else "N/A",
-            "Comentário": texto.get_text(strip=True) if texto else "Sem texto",
+            # Limpa o texto da nota: ex: "5,0 de 5 estrelas" -> "5,0"
+            "Nota": nota_tag.get_text(strip=True).split()[0].replace(",",",") if nota_tag else "N/A",
+            "Comentário": texto_container.get_text(strip=True) if texto_container else "Sem texto",
             "Link": f"https://www.amazon.com.br/dp/{asin}"
         })
 
@@ -192,7 +207,7 @@ def main():
         carregar_cookies(driver)
         time.sleep(2)
 
-        print("\n🔍 Buscando produtos mais vendidos em Eletrodomésticos...")
+        print("\n🔍 Buscando produtos mais vendidos em Eletrônicos...")
         asins = extrair_asin_dos_produtos(driver)
         print(f"✅ {len(asins)} produtos encontrados: {asins}")
 
@@ -203,14 +218,29 @@ def main():
             print(f"\n📦 Processando produto {i}/{len(asins)} (ASIN: {asin})")
             try:
                 nome_produto, preco, nota_geral, qtd_avaliacoes = extrair_detalhes_produto(driver, asin)
-                comentarios = get_comentarios_produto(driver, asin, nome_produto, preco, nota_geral)
+                # comentarios = get_comentarios_produto(driver, asin, nome_produto, preco, nota_geral)
                 
-                if comentarios:
-                    for comentario in comentarios:
-                        comentario["Posição"] = asin_para_posicao[asin]
-                        comentario["Qtd. Avaliações"] = qtd_avaliacoes
-                    todos_comentarios.extend(comentarios)
-                    print(f"   ✅ {len(comentarios)} comentários coletados (Posição: {asin_para_posicao[asin]})")
+                # if comentarios:
+                #     for comentario in comentarios:
+                #         comentario["Posição"] = asin_para_posicao[asin]
+                #         comentario["Qtd. Avaliações"] = qtd_avaliacoes
+                #     todos_comentarios.extend(comentarios)
+                #     print(f"   ✅ {len(comentarios)} comentários coletados (Posição: {asin_para_posicao[asin]})")
+                # 2. Adiciona a linha do produto com valores vazios para os comentários
+                todos_comentarios.append({
+                    "ASIN": asin,
+                    "Nome": nome_produto,
+                    "Preço": preco,
+                    "Nota Geral": nota_geral,
+                    "Qtd. Avaliações": qtd_avaliacoes,
+                    "Posição": asin_para_posicao[asin],
+                    "País": "N/A", 
+                    "Data Comentário": "N/A",
+                    "Nota": "N/A",
+                    "Comentário": "COLETA DE COMENTÁRIOS IGNORADA",
+                    "Link": f"https://www.amazon.com.br/dp/{asin}"
+                })
+                print(f"   ✅ Detalhes coletados. Coleta de comentários intencionalmente pulada.")
             except Exception as e:
                 print(f"❌ Erro ao processar produto {asin}: {e}")
 

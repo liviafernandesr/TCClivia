@@ -12,7 +12,7 @@ def arquivo_mais_recente(padrao):
     return max(arquivos, key=os.path.getctime)
 
 amazon_csv = arquivo_mais_recente("resultados/comentarios_eletr_amz_*.csv")
-ml_csv = arquivo_mais_recente("resultados/mais_vendidos_eletrodomesticos_*.csv")
+ml_csv = arquivo_mais_recente("resultados/mais_vendidos_eletr_ml_*.csv")
 
 print("📄 Arquivo Amazon:", amazon_csv)
 print("📄 Arquivo Mercado Livre:", ml_csv)
@@ -57,14 +57,13 @@ for i, produto_amz in enumerate(amazon[col_amazon]):
 resultados = pd.DataFrame(matches)
 
 # filtrando por similaridade mínima
-limiar = 0.3 # mínimo mais baixo pq os nomes são bem diferentes (amostra pequena)
+limiar = 0.8 
 resultados_filtrados = resultados[resultados["Similaridade"] >= limiar]
 
 print("\n🧾 Resultados filtrados:")
 print(resultados_filtrados)
 
 
-
-# saida_csv = f"resultados/comparacao_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.csv"
-# resultados_filtrados.to_csv(saida_csv, index=False, sep=';', encoding='utf-8-sig')
-# print(f"\n✅ Resultado salvo em: {saida_csv}")
+saida_csv = f"resultados/comparacao_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.csv"
+resultados_filtrados.to_csv(saida_csv, index=False, sep=';', encoding='utf-8-sig')
+print(f"\n✅ Resultado salvo em: {saida_csv}")

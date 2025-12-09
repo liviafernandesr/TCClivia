@@ -109,8 +109,8 @@ def extrair_data_comentario(comentario_element):
         return "N/A"
 
 # URL
-url = "https://www.mercadolivre.com.br/mais-vendidos/MLB5726"
-print("🔍 Acessando página de mais vendidos em Eletrodomésticos...")
+url = "https://www.mercadolivre.com.br/mais-vendidos/MLB1051"
+print("🔍 Acessando página de mais vendidos em Eletrônicos...")
 driver.get(url)
 
 time.sleep(3)
@@ -128,7 +128,7 @@ except Exception as e:
     exit()
 
 dados = []
-for posicao, prod in enumerate(produtos[:5], 1):  # Limita aos 5 primeiros
+for posicao, prod in enumerate(produtos, 1):  # Pega todos os produtos da categoria "Mais Vendidos Eletrônicos"
     try:
         nome = prod.text.strip()
         link = encurtar_link(prod.get_attribute("href"))
@@ -147,76 +147,96 @@ for posicao, prod in enumerate(produtos[:5], 1):  # Limita aos 5 primeiros
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5);")
         time.sleep(1)
         
-        comentarios = []
-        try:
-            # ETAPA 1: Clicar no botão "Mostrar todas as opiniões" para carregar o iframe.
-            ver_mais_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='see-more']"))
-            )
-            driver.execute_script("arguments[0].click();", ver_mais_button)
-            print("✅ Clicou em 'Mostrar todas as opiniões'.")
+        # comentarios = []
+        # try:
+        #     # ETAPA 1: Clicar no botão "Mostrar todas as opiniões" para carregar o iframe.
+        #     ver_mais_button = WebDriverWait(driver, 10).until(
+        #         EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='see-more']"))
+        #     )
+        #     driver.execute_script("arguments[0].click();", ver_mais_button)
+        #     print("✅ Clicou em 'Mostrar todas as opiniões'.")
 
-            # ETAPA 2: Esperar o iframe aparecer e mudar o foco do driver para ele.
-            iframe = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "ui-pdp-iframe-reviews"))
-            )
-            driver.switch_to.frame(iframe)
-            print("✅ Entrou no iframe de avaliações.")
+        #     # ETAPA 2: Esperar o iframe aparecer e mudar o foco do driver para ele.
+        #     iframe = WebDriverWait(driver, 10).until(
+        #         EC.presence_of_element_located((By.ID, "ui-pdp-iframe-reviews"))
+        #     )
+        #     driver.switch_to.frame(iframe)
+        #     print("✅ Entrou no iframe de avaliações.")
 
-            # ETAPA 3: Encontrar o elemento de rolagem DENTRO do iframe.
-            scroll_element = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "section[data-testid='reviews-desktop']"))
-            )
-            print("🔄 Iniciando rolagem para carregar todos os comentários...")
+        #     # ETAPA 3: Encontrar o elemento de rolagem DENTRO do iframe.
+        #     scroll_element = WebDriverWait(driver, 10).until(
+        #         EC.presence_of_element_located((By.CSS_SELECTOR, "section[data-testid='reviews-desktop']"))
+        #     )
+        #     print("🔄 Iniciando rolagem para carregar todos os comentários...")
             
             # ETAPA 4: Loop de rolagem inteligente.
-            last_height = 0
-            while True:
-                driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scroll_element)
-                time.sleep(2)
-                new_height = driver.execute_script("return arguments[0].scrollHeight", scroll_element)
-                if new_height == last_height:
-                    print("✅ Fim da rolagem.")
-                    break
-                last_height = new_height
+            # last_height = 0
+            # while True:
+            #     driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scroll_element)
+            #     time.sleep(2)
+            #     new_height = driver.execute_script("return arguments[0].scrollHeight", scroll_element)
+            #     if new_height == last_height:
+            #         print("✅ Fim da rolagem.")
+            #         break
+            #     last_height = new_height
             
-            # ETAPA 5: Coletar todos os comentários agora que estão visíveis.
-            comentarios_elementos = driver.find_elements(By.CSS_SELECTOR, "article.ui-review-capability-comments__comment")
-            print(f"📰 Coletando {len(comentarios_elementos)} comentários...")
+            # # ETAPA 5: Coletar todos os comentários agora que estão visíveis.
+            # comentarios_elementos = driver.find_elements(By.CSS_SELECTOR, "article.ui-review-capability-comments__comment")
+            # print(f"📰 Coletando {len(comentarios_elementos)} comentários...")
 
-            for comentario_el in comentarios_elementos:
-                try:
-                    texto = comentario_el.find_element(By.CSS_SELECTOR, "p.ui-review-capability-comments__comment__content").text.strip()
-                    nota = extrair_nota(comentario_el)
-                    data_comentario = extrair_data_comentario(comentario_el)
-                    comentarios.append({
-                        "Comentário": texto, "Nota": nota, "Data Comentário": data_comentario
-                    })
-                except Exception as e_inner:
-                    print(f"⚠ Erro em comentário individual: {str(e_inner)[:100]}")
-                    continue
+            # for comentario_el in comentarios_elementos:
+            #     try:
+            #         texto = comentario_el.find_element(By.CSS_SELECTOR, "p.ui-review-capability-comments__comment__content").text.strip()
+            #         nota = extrair_nota(comentario_el)
+            #         data_comentario = extrair_data_comentario(comentario_el)
+            #         comentarios.append({
+            #             "Comentário": texto, "Nota": nota, "Data Comentário": data_comentario
+            #         })
+            #     except Exception as e_inner:
+            #         print(f"⚠ Erro em comentário individual: {str(e_inner)[:100]}")
+            #         continue
         
-        except TimeoutException:
-            print("⚠ Botão 'Mostrar todas as opiniões' ou iframe não encontrado. O produto pode não ter comentários.")
+        # except TimeoutException:
+        #     print("⚠ Botão 'Mostrar todas as opiniões' ou iframe não encontrado. O produto pode não ter comentários.")
         
-        finally:
-            # ETAPA 6: ESSENCIAL - Voltar para o conteúdo principal da página.
-            driver.switch_to.default_content()
-            print("✅ Contexto retornado para a página principal.")
+        # finally:
+        #     # ETAPA 6: ESSENCIAL - Voltar para o conteúdo principal da página.
+        #     driver.switch_to.default_content()
+        #     print("✅ Contexto retornado para a página principal.")
 
-        if not comentarios:
-            comentarios.append({"Comentário": "Sem comentários disponíveis", "Nota": "N/A", "Data Comentário": "N/A"})
+        # if not comentarios:
+        #     comentarios.append({"Comentário": "Sem comentários disponíveis", "Nota": "N/A", "Data Comentário": "N/A"})
 
-        for comentario in comentarios:
-            dados.append({
-                "Posição": posicao, "ASIN": asin, "Nota Geral": nota_geral,
-                "Qtd. Avaliações": qtd_avaliacoes, "Data Comentário": comentario["Data Comentário"],
-                "Nome": nome, "Preço à vista": preco, "Nota": comentario["Nota"],
-                "Comentário": comentario["Comentário"], "Link": link
-            })
+        # for comentario in comentarios:
+        #     dados.append({
+        #         "Posição": posicao, "ASIN": asin, "Nota Geral": nota_geral,
+        #         "Qtd. Avaliações": qtd_avaliacoes, "Data Comentário": comentario["Data Comentário"],
+        #         "Nome": nome, "Preço à vista": preco, "Nota": comentario["Nota"],
+        #         "Comentário": comentario["Comentário"], "Link": link
+        #     })
 
-        print(f"✅ {posicao}° - '{nome[:30]}...' | {len(comentarios)} comentários coletados.")
+        # print(f"✅ {posicao}° - '{nome[:30]}...' | {len(comentarios)} comentários coletados.")
 
+        # driver.close()
+        # driver.switch_to.window(driver.window_handles[0])
+        # time.sleep(1)
+        # NOVO BLOCO: Coleta de detalhes básicos e inserção de uma única linha.
+        dados.append({
+            "Posição": posicao, 
+            "ASIN": asin, 
+            "Nota Geral": nota_geral,
+            "Qtd. Avaliações": qtd_avaliacoes, 
+            "Data Comentário": "N/A (Coleta ignorada)", # Coluna de comentário
+            "Nome": nome, 
+            "Preço à vista": preco, 
+            "Nota": "N/A", # Coluna de nota individual
+            "Comentário": "Coleta de comentários ignorada", # Coluna de comentário
+            "Link": link
+        })
+        
+        print(f"✅ {posicao}° - '{nome[:30]}...' | Nota Geral: {nota_geral} | Comentários pulados.")
+
+        # Fechar a aba do produto e voltar para a aba principal
         driver.close()
         driver.switch_to.window(driver.window_handles[0])
         time.sleep(1)
@@ -234,7 +254,7 @@ if dados:
     
     os.makedirs("resultados", exist_ok=True)
     agora = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    arquivo = f"resultados/mais_vendidos_eletrodomesticos_{agora}.csv"
+    arquivo = f"resultados/mais_vendidos_eletr_ml_{agora}.csv"
     
     df.to_csv(arquivo, index=False, encoding="utf-8-sig", sep=";",
               columns=["Posição", "ASIN", "Nota Geral", "Qtd. Avaliações", "Data Comentário", 
