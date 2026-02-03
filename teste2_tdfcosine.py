@@ -11,8 +11,8 @@ def arquivo_mais_recente(padrao):
         raise FileNotFoundError(f"Nenhum arquivo encontrado para o padrão: {padrao}")
     return max(arquivos, key=os.path.getctime)
 
-amazon_csv = arquivo_mais_recente("resultados/comentarios_eletr_amz_*.csv")
-ml_csv = arquivo_mais_recente("resultados/mais_vendidos_eletr_ml_*.csv")
+amazon_csv = arquivo_mais_recente("resultados_amazon/mais_vendidos_amazon_SAMPLE_*.csv")
+ml_csv = arquivo_mais_recente("resultados/mais_vendidos_ml_SAMPLE_*.csv")
 
 print("📄 Arquivo Amazon:", amazon_csv)
 print("📄 Arquivo Mercado Livre:", ml_csv)

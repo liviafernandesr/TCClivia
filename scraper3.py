@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 import random
 from selenium_stealth import stealth
+import undetected_chromedriver as uc
 
 # Tenta definir o formato de datas para português. Se não funcionar, ignora o erro.
 try:
@@ -100,34 +101,43 @@ def formatar_data_e_pais_amazon(data_str):
 
 # DEF REINICIAR DRIVER
 def verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios):
-    """Reinicia o driver se atingiu limite"""
     if produto_atual % REINICIAR_A_CADA == 0:
-        print(f"   🔄 [{contador_reinicios+1}] Reiniciando driver...")
+        print(f"   🔄 [{contador_reinicios+1}] Reiniciando driver de forma segura...")
         try:
             driver.quit()
         except:
             pass
         
-        time.sleep(random.uniform(5, 8))
+        # GARANTIA: Espera o Windows liberar os recursos e as portas (fundamental para o UC)
+        time.sleep(15) 
         
-        options = Options()
+        options = uc.ChromeOptions()
         options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-notifications")
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        novo_driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()), 
-            options=options
-        )
-        
-        novo_driver.get("https://www.amazon.com.br")
-        carregar_cookies(novo_driver)
-        time.sleep(2)
-        novo_driver.refresh()
-        
-        return novo_driver, contador_reinicios + 1
-    return driver, contador_reinicios
+        # Tenta criar o novo driver com tratamento de erro
+        try:
+            novo_driver = uc.Chrome(options=options)
+            
+            stealth(novo_driver,
+                languages=["pt-BR", "pt"],
+                vendor="Google Inc.",
+                platform="Win32",
+                webgl_vendor="Intel Inc.",
+                renderer="Intel Iris OpenGL Engine",
+                fix_hairline=True,
+            )
+            
+            novo_driver.get("https://www.amazon.com.br")
+            carregar_cookies(novo_driver)
+            time.sleep(5)
+            
+            return novo_driver, contador_reinicios + 1
+        except Exception as e:
+            print(f"   ⚠️ Falha ao recriar driver: {e}. Tentando novamente em 10s...")
+            time.sleep(10)
+            return verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios)
 
+    return driver, contador_reinicios
 
 def filtrar_comentario_brasileiro(data_str):
     """
@@ -446,7 +456,12 @@ def extrair_detalhes_produto(driver, asin, posicao_global, subcategoria, posicao
             
             # DELAY ALEATÓRIO
             time.sleep(DELAY_BASE + random.uniform(0.5, 2.5))
-            
+            # Simular leitura humana rolando a página
+            driver.execute_script(f"window.scrollTo(0, {random.randint(300, 700)});")
+            time.sleep(random.uniform(1, 3))
+            driver.execute_script("window.scrollTo(0, 0);") # Volta para o topo
+
+
             soup = BeautifulSoup(driver.page_source, 'html.parser')
             
             # VERIFICAÇÃO DE PÁGINA VÁZIA - CORRIGIR INDENTAÇÃO AQUI
@@ -770,70 +785,139 @@ def extrair_produtos_da_subcategoria(driver, link_subcategoria):
     produtos = []
     
     try:
-        # Aguardar carregamento da lista de produtos
-        wait = WebDriverWait(driver, 10)
+        print("   🔍 Carregando todos os produtos...")
         
-        # Método 1: Buscar pela lista ordenada de produtos
-        try:
-            lista_produtos = wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "ol.a-ordered-list.a-vertical.p13n-gridRow")
-                )
-            )
+        # ============================================
+        # 1. ROLAR PARA CARREGAR TODOS OS PRODUTOS
+        # ============================================
+        for i in range(8):  # Rolar mais vezes
+            altura_anterior = driver.execute_script("return document.body.scrollHeight")
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
             
-            # Encontrar todos os itens da lista
-            itens = lista_produtos.find_elements(By.CSS_SELECTOR, "li.zg-no-numbers")
+            # Verificar se carregou mais conteúdo
+            altura_atual = driver.execute_script("return document.body.scrollHeight")
+            if altura_atual == altura_anterior and i > 3:
+                break  # Parar se não carregar mais nada
+        
+        time.sleep(3)
+        
+        # ============================================
+        # 2. MÉTODO PRINCIPAL: BUSCAR POR NÚMEROS (#1, #2, etc)
+        # ============================================
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
+        # Método A: Procurar elementos com a numeração
+        elementos_numerados = []
+        
+        # Tentar vários seletores possíveis
+        seletores_possiveis = [
+            'div[class*="zg-item"]',  # Mais comum
+            'div[class*="p13n-sc-uncoverable-faceout"]',
+            'div[class*="zg-grid-general-faceout"]',
+            'div[class*="_cDEzb_p13n-sc-css-line-clamp"]',
+            'div[id*="p13n-asin-index-"]',
+            'li[class*="zg-item"]'
+        ]
+        
+        for seletor in seletores_possiveis:
+            elementos = soup.select(seletor)
+            if elementos and len(elementos) > 20:  # Se encontrou muitos elementos
+                elementos_numerados = elementos
+                print(f"   ✅ Encontrou {len(elementos)} produtos com seletor: {seletor}")
+                break
+        
+        # Se não encontrou com seletores específicos, buscar todos os divs de produto
+        if not elementos_numerados:
+            # Buscar todos os divs que podem conter produtos
+            todos_divs = soup.find_all('div')
+            for div in todos_divs:
+                classes = div.get('class', [])
+                if isinstance(classes, list):
+                    classes = ' '.join(classes)
+                
+                # Verificar se parece um produto (tem texto, talvez número)
+                texto = div.get_text(strip=True)
+                if len(texto) > 50 and any(palavra in classes.lower() for palavra in ['zg', 'p13n', 'item', 'product']):
+                    elementos_numerados.append(div)
             
-            for item in itens:
-                try:
-                    # Extrair ASIN do atributo data-asin
-                    asin = item.get_attribute("data-asin")
-                    if asin and len(asin) == 10:
-                        produtos.append(asin)
-                        continue
-                    
-                    # Se não encontrar no data-asin, procurar no link do produto
-                    link_element = item.find_element(By.CSS_SELECTOR, "a[href*='/dp/']")
-                    if link_element:
-                        href = link_element.get_attribute("href")
-                        match = re.search(r'/dp/([A-Z0-9]{10})', href)
-                        if match:
-                            produtos.append(match.group(1))
-                except:
-                    continue
-                    
-        except:
-            # Método 2: Buscar pelos elementos com data-asin
-            elementos_asin = driver.find_elements(By.CSS_SELECTOR, "[data-asin]")
-            for elemento in elementos_asin:
-                asin = elemento.get_attribute("data-asin")
-                if asin and len(asin) == 10 and asin not in produtos:
+            print(f"   🔍 Encontrou {len(elementos_numerados)} produtos pelo método alternativo")
+        
+        # ============================================
+        # 3. EXTRAIR ASINS DOS ELEMENTOS ENCONTRADOS
+        # ============================================
+        for elemento in elementos_numerados:
+            try:
+                # Método 1: Buscar ASIN no data-asin
+                asin = elemento.get('data-asin')
+                if asin and len(asin) == 10:
                     produtos.append(asin)
-        
-        # Se ainda não encontrou produtos, usar o método antigo como fallback
-        if not produtos:
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            asins = set()
-            
-            # Encontrar todos os links de produtos com badges (#1, #2, etc.)
-            produtos_elements = soup.select('div.zg-grid-general-faceout')
-            
-            for produto in produtos_elements:
-                link = produto.select_one('a[href*="/dp/"]')
-                if link:
+                    continue
+                
+                # Método 2: Buscar link do produto
+                links = elemento.find_all('a', href=True)
+                for link in links:
                     href = link.get('href', '')
                     match = re.search(r'/dp/([A-Z0-9]{10})', href)
                     if match:
                         asin = match.group(1)
-                        asins.add(asin)
+                        if asin not in produtos:
+                            produtos.append(asin)
+                            break
+                
+                # Método 3: Se não encontrou link, extrair do id
+                elemento_id = elemento.get('id', '')
+                if 'p13n-asin-index-' in elemento_id:
+                    # O ASIN pode estar no id: p13n-asin-index-0-B07XXXXXXX
+                    partes = elemento_id.split('-')
+                    for parte in partes:
+                        if len(parte) == 10 and parte.isalnum():
+                            produtos.append(parte)
+                            break
+                            
+            except:
+                continue
+        
+        # ============================================
+        # 4. MÉTODO DIRETO: BUSCAR TODOS OS LINKS /dp/
+        # ============================================
+        if len(produtos) < 30:  # Se ainda tem poucos
+            print("   🔍 Buscando todos os links /dp/ na página...")
             
-            produtos = list(asins)
+            # Usar regex para encontrar todos os ASINs na página
+            page_text = driver.page_source
+            asins_regex = re.findall(r'/dp/([A-Z0-9]{10})', page_text)
+            
+            for asin in asins_regex:
+                if asin not in produtos:
+                    produtos.append(asin)
+            
+            print(f"   📈 Encontrou {len(asins_regex)} ASINs via regex")
         
-        print(f"   ✅ {len(produtos)} produtos encontrados na lista de mais vendidos")
+        # ============================================
+        # 5. REMOVER DUPLICATAS E ORDENAR
+        # ============================================
+        # Remover duplicatas
+        produtos_unicos = []
+        for asin in produtos:
+            if asin not in produtos_unicos:
+                produtos_unicos.append(asin)
         
+        produtos = produtos_unicos
+        
+        print(f"   ✅ Total de {len(produtos)} produtos únicos encontrados")
+        
+        # Mostrar alguns para verificação
+        if produtos:
+            print(f"   📋 Primeiros 10 ASINs: {produtos[:10]}")
+        
+        # Verificar quantidade
+        if len(produtos) < 40:
+            print(f"   ⚠ Apenas {len(produtos)} produtos - pode não ter carregado todos")
+            
     except Exception as e:
         print(f"   ❌ Erro ao extrair produtos: {e}")
-        # Fallback: método antigo
+        # Fallback básico
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         asins = set()
         
@@ -843,10 +927,10 @@ def extrair_produtos_da_subcategoria(driver, link_subcategoria):
             href = link.get('href', '')
             match = re.search(r'/dp/([A-Z0-9]{10})', href)
             if match:
-                asin = match.group(1)
-                asins.add(asin)
+                asins.add(match.group(1))
         
         produtos = list(asins)
+        print(f"   ⚠ Fallback: {len(produtos)} produtos encontrados")
     
     return produtos
 
@@ -876,7 +960,21 @@ def main():
     contador_reinicios = 0
 
     try:
-        print("🔄 Iniciando navegador e carregando cookies...")
+        print("🔄 Iniciando navegador indetectável...")
+        # Cria o primeiro driver usando a lógica do UC
+        options = uc.ChromeOptions()
+        options.add_argument("--window-size=1920,1080")
+        driver = uc.Chrome(options=options)
+        
+        stealth(driver,
+            languages=["pt-BR", "pt"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+        
         driver.get("https://www.amazon.com.br")
         carregar_cookies(driver)
         time.sleep(2)
@@ -903,111 +1001,107 @@ def main():
         # LOOP POR CADA SUBCATEGORIA
         # =======================================================
         for idx, subcat in enumerate(subcategorias, 1):
+            subcategoria_nome_original = subcat["nome"]
             subcategoria_link = subcat["link"]
-            subcategoria_nome_original = subcat["nome"]  # Nome extraído do menu lateral
-            
-            print(f"\n" + "="*60)
-            print(f"🟦 PROCESSANDO SUBCATEGORIA {idx}/{len(subcategorias)}")
-            print(f"   📌 Nome no menu: {subcategoria_nome_original}")
-            print(f"   🔗 Link: {subcategoria_link}")
-            print("="*60)
 
-            driver.get(subcategoria_link)
-            time.sleep(3)
-            
-            # DEBUG: Print título da página para verificação
-            print(f"   🏷️ Título da página: {driver.title}")
-            print(f"   🌐 URL atual: {driver.current_url}")
-            
-            subcategoria_nome = extrair_subcategoria_pela_pagina(driver)
-            
-            print(f"   📍 Subcategoria detectada: {subcategoria_nome}")
-            
-            # Extrair produtos desta subcategoria
-            asins = extrair_produtos_da_subcategoria(driver, subcategoria_link)
-            
-            if not asins:
-                print(f"   ⚠ Nenhum produto encontrado nesta subcategoria")
+            # 🛑 FILTRO: Pular categorias com layout problemático
+            categorias_para_pular = ["Apps e Jogos", "Loja Kindle", "eBooks Kindle", "Gift Cards", "Cartões Presente"]
+            if any(pular.lower() in subcategoria_nome_original.lower() for pular in categorias_para_pular):
+                print(f"\n⏩ Pulando categoria: {subcategoria_nome_original} (Layout incompatível)")
                 continue
-            
-            print(f"   📊 {len(asins)} produtos encontrados")
-            print(f"   📋 Primeiros 5 ASINs: {asins[:5]}")
-            
-            # Limitar para teste (remova depois de testar)
-            # asins = asins[:15] # Limita a 15 produtos para teste ##################################### LIMITAÇÃO PRODUTOS
-            
-            
-            # =======================================================
-            # LOOP POR TODOS OS PRODUTOS
-            # =======================================================
-            for posicao_categoria, asin in enumerate(asins, 1):
-                try:
-                    # ADICIONE ESTAS 5 LINHAS:
-                    time.sleep(random.uniform(1, 2.5))
-                    
-                    if posicao_categoria % 5 == 0:
-                        print(f"   ⏸️ Pausa estratégica...")
-                        time.sleep(random.uniform(5, 8))
-                    
-                    driver, contador_reinicios = verificar_e_reiniciar_driver(driver, posicao_categoria, contador_reinicios)
 
-                    print(f"   📦 Processando produto {posicao_categoria}/{len(asins)} (ASIN: {asin})")
-                    
-                    # Extrair detalhes básicos do produto (agora com características)
-                    nome_produto, preco, nota_geral, qtd_avaliacoes, caracteristicas = extrair_detalhes_produto(
-                        driver, asin, posicao_global, subcategoria_nome, posicao_categoria
-                    )
-                    
-                    # Coletar comentários (até 15)
-                    comentarios = []
-                    comentarios_coletados = 0
-                    
+            try:
+                # 1. Verifica se o driver ainda está vivo
+                try:
+                    _ = driver.current_url
+                except:
+                    print("   ⚠️ Driver perdido. Recriando...")
+                    driver, contador_reinicios = verificar_e_reiniciar_driver(driver, REINICIAR_A_CADA, contador_reinicios)
+
+                print(f"\n" + "="*60)
+                print(f"🟦 PROCESSANDO SUBCATEGORIA {idx}/{len(subcategorias)}")
+                print(f"   📌 Nome: {subcategoria_nome_original}")
+                print("="*60)
+
+                # 2. Navega para a categoria
+                driver.get(subcategoria_link)
+                time.sleep(random.uniform(3, 5))
+                
+                print(f"   🏷️ Título da página: {driver.title}")
+                subcategoria_nome = extrair_subcategoria_pela_pagina(driver)
+                
+                # 3. Extrair ASINs
+                asins = extrair_produtos_da_subcategoria(driver, subcategoria_link)
+                
+                if not asins:
+                    print(f"   ⚠ Nenhum produto encontrado nesta subcategoria")
+                    continue
+                
+                print(f"   📊 {len(asins)} produtos encontrados")
+                asins = asins[:30] # LIMITAÇÃO PARA TESTE
+                
+                # 4. LOOP POR TODOS OS PRODUTOS (Agora dentro do try da categoria)
+                for posicao_categoria, asin in enumerate(asins, 1):
                     try:
+                        time.sleep(random.uniform(4, 9)) # Pausa humana
+                        
+                        if posicao_categoria % 7 == 0:
+                            pausa_cafe = random.uniform(20, 45)
+                            print(f"☕ Pausa para o café: {pausa_cafe:.2f}s")
+                            time.sleep(pausa_cafe)
+
+                        driver, contador_reinicios = verificar_e_reiniciar_driver(driver, posicao_categoria, contador_reinicios)
+
+                        print(f"   📦 Processando produto {posicao_categoria}/{len(asins)} (ASIN: {asin})")
+                        
+                        # Extração dos detalhes
+                        nome_produto, preco, nota_geral, qtd_avaliacoes, caracteristicas = extrair_detalhes_produto(
+                            driver, asin, posicao_global, subcategoria_nome, posicao_categoria
+                        )
+                        
+                        # Extração dos comentários
                         comentarios = extrair_comentarios_amazon(driver, asin, max_comentarios=15)
                         comentarios_coletados = len(comentarios)
-                        print(f"   ✅ {comentarios_coletados} comentários coletados")
-                    except Exception as e:
-                        print(f"   ⚡ Erro ao coletar comentários: {str(e)[:50]}")
-                    
-                    # Se não coletou comentários, adicionar um placeholder
-                    if not comentarios:
-                        comentarios.append({
-                            "Nota Comentário": "N/A",
-                            "País": "N/A",
-                            "Data Comentário": "N/A",
-                            "Comentário": "Sem comentários disponíveis"
-                        })
-                    
-                    # Adicionar cada comentário como linha separada
-                    for comentario in comentarios:
-                        todos_dados.append({
-                            "Posição Global": posicao_global,
-                            "Posição Categoria": posicao_categoria,
-                            "Subcategoria": subcategoria_nome,
-                            "ASIN": asin,
-                            "Nome": nome_produto,
-                            "Preço": preco,
-                            "Nota Geral": nota_geral,
-                            "Qtd. Avaliações": qtd_avaliacoes,
-                            "Características": caracteristicas,  # ← NOVA COLUNA AQUI
-                            "País": comentario["País"],
-                            "Data Comentário": comentario["Data Comentário"],
-                            "Nota Comentário": comentario["Nota Comentário"],
-                            "Comentário": comentario["Comentário"],
-                            "Link": f"https://www.amazon.com.br/dp/{asin}"
-                        })
-                    
-                    print(f"   ✔ Produto {posicao_categoria}/{len(asins)} finalizado - {comentarios_coletados} comentários")
-                    posicao_global += 1
+                        print(f"      💬 Comentários coletados: {comentarios_coletados}")
+                        if not comentarios:
+                            comentarios = [{
+                                "Nota Comentário": "N/A", "País": "N/A", 
+                                "Data Comentário": "N/A", "Comentário": "Sem comentários disponíveis"
+                            }]
+                        
+                        for comentario in comentarios:
+                            todos_dados.append({
+                                "Posição Global": posicao_global,
+                                "Posição Categoria": posicao_categoria,
+                                "Subcategoria": subcategoria_nome,
+                                "ASIN": asin,
+                                "Nome": nome_produto,
+                                "Preço": preco,
+                                "Nota Geral": nota_geral,
+                                "Qtd. Avaliações": qtd_avaliacoes,
+                                "Características": caracteristicas,
+                                "País": comentario["País"],
+                                "Data Comentário": comentario["Data Comentário"],
+                                "Nota Comentário": comentario["Nota Comentário"],
+                                "Comentário": comentario["Comentário"],
+                                "Link": f"https://www.amazon.com.br/dp/{asin}"
+                            })
+                        
+                        posicao_global += 1
 
-                except Exception as e:
-                    print(f"   ❌ Erro no produto ASIN {asin}: {str(e)[:50]}")
-                
-                    if "invalid session id" in str(e) or "no such window" in str(e):
-                        print("   🔄 Sessão expirada, recriando driver...")
-                        driver, contador_reinicios = verificar_e_reiniciar_driver(driver, 1, contador_reinicios)
-                    
-                    continue
+                    except Exception as e:
+                        print(f"   ❌ Erro no produto ASIN {asin}: {str(e)[:50]}")
+                        continue
+
+                # 5. Descanso entre categorias
+                print(f"✅ Categoria {subcategoria_nome} finalizada.")
+                intervalo_descanso = random.uniform(40, 90)
+                print(f"😴 Descanso estratégico: {intervalo_descanso:.2f}s...")
+                time.sleep(intervalo_descanso)
+
+            except Exception as e:
+                print(f"   ❌ Erro crítico na categoria {subcategoria_nome_original}: {str(e)[:50]}")
+                continue
         
         # =======================================================
         # SALVAR RESULTADOS

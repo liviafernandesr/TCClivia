@@ -124,10 +124,46 @@ def extrair_preco_avista(driver):
 
 def extrair_asin(link):
     try:
-        asin = re.search(r"(MLB-?\d+)", link).group()
-        return asin
-    except:
-        return "N/A"
+        # Padrões comuns de ASIN no Mercado Livre Brasil
+        padroes = [
+            r"MLB[-\s]?\d+",           # MLB-12345678 ou MLB 12345678
+            r"ML[A-Z]\d+",             # MLI12345678, MLC12345678, etc
+            r"([A-Z]{3}\d+)",          # 3 letras + números
+            r"-([A-Z0-9]{10,13})$",    # Código no final da URL
+            r"-([A-Z0-9]{10,13})\?",   # Código antes de parâmetros
+            r"-([A-Z0-9]{10,13})/"     # Código antes de trailing slash
+        ]
+        
+        for padrao in padroes:
+            match = re.search(padrao, link)
+            if match:
+                asin = match.group(1) if len(match.groups()) > 0 else match.group()
+                # Limpar caracteres especiais
+                asin = re.sub(r'[^A-Z0-9]', '', asin)
+                if len(asin) >= 10:  # ASINs geralmente têm 10+ caracteres
+                    return asin
+        
+        # Se nenhum padrão funcionar, tentar pegar os últimos números/letras
+        url_parts = link.split('/')
+        for part in reversed(url_parts):
+            # Procurar por MLB- seguido de números
+            if 'MLB-' in part or 'MLB_' in part or 'MLB ' in part:
+                cleaned = re.sub(r'[^A-Z0-9-]', '', part)
+                return cleaned
+            
+            # Se tiver MLB no começo
+            if part.startswith('MLB'):
+                return part
+        
+        # Último recurso: pegar a última parte da URL
+        last_part = url_parts[-1].split('?')[0]  # Remove parâmetros
+        if last_part and len(last_part) >= 8:
+            return last_part
+            
+    except Exception as e:
+        print(f"Erro ao extrair ASIN: {e}")
+    
+    return "N/A"
 
 def extrair_nota_geral_e_avaliacoes(driver):
     try:
@@ -181,11 +217,48 @@ def extrair_texto_comentario(comentario_element):
         except:
             return "Texto não disponível"
 
-# === PARTE PRINCIPAL ===
-if not os.path.exists(COOKIES_PATH):
-    print("❌ Cookies não encontrados!")
-    driver.quit()
-    exit()
+def scroll_ate_final(driver):
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    while True:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(1.5)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+
+def extrair_caracteristicas(driver):
+    caracteristicas = {}
+
+    try:
+        pickers = driver.find_elements(
+            By.CLASS_NAME, "ui-pdp-outside_variations__picker"
+        )
+
+        for picker in pickers:
+            try:
+                titulo = picker.find_element(
+                    By.CLASS_NAME, "ui-pdp-outside_variations__title"
+                )
+
+                nome = titulo.find_element(
+                    By.CLASS_NAME, "ui-pdp-outside_variations__title__label"
+                ).text.replace(":", "").strip()
+
+                valor = titulo.find_element(
+                    By.CLASS_NAME, "ui-pdp-outside_variations__title__value"
+                ).text.strip()
+
+                caracteristicas[nome] = valor
+            except:
+                continue
+
+    except:
+        pass
+
+    return caracteristicas
+
 
 # Carregar cookies (MAIS RÁPIDO)
 driver.get("https://www.mercadolivre.com.br")
@@ -196,189 +269,240 @@ time.sleep(1)  # REDUZIDO
 driver.get(url)
 time.sleep(1)  # REDUZIDO
 
-# Identificar TODAS as subcategorias
-sections = driver.find_elements(By.CSS_SELECTOR, "section.dynamic-carousel-normal-desktop")
-
-print(f"📌 {len(sections)} subcategorias encontradas.")
+print("🔍 Buscando todas as categorias do bloco final...")
 
 dados = []
 posicao_global = 1
 
+scroll_ate_final(driver)
+
 # =======================================================
-# LOOP POR CADA SUBCATEGORIA
+# LOOP POR CADA SUBCATEGORIA - CORRIGIDO
 # =======================================================
-for i in range(len(sections)):
-    # Voltar para a página principal
-    driver.get(url)
-    time.sleep(1)
-    
-    # Recarregar todas as seções
-    sections = driver.find_elements(By.CSS_SELECTOR, "section.dynamic-carousel-normal-desktop")
-    if i >= len(sections):
-        continue
+for idx in range(50):  # Limite seguro de categorias
+    try:
+        # SEMPRE VOLTAR PARA A PÁGINA INICIAL DAS CATEGORIAS
+        if driver.current_url != url:
+            driver.get(url)
+            time.sleep(2)
+            scroll_ate_final(driver)
         
-    section = sections[i]
-
-    # Extrair informações da subcategoria
-    try:
-        subcategoria = section.find_element(By.CSS_SELECTOR, "h2").text.strip()
-    except:
-        subcategoria = f"Subcategoria_{i+1}"
-        
-    try:
-        link_sub = section.find_element(By.CSS_SELECTOR, "a.dynamic__carousel-link").get_attribute("href")
-    except:
-        continue
-
-    print(f"\n🟦 Processando: {subcategoria}")
-
-    driver.get(link_sub)
-    time.sleep(1)
-
-    # Aguardar produtos carregarem
-    try:
-        produtos = WebDriverWait(driver, 8).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.poly-component__title"))
+        # Aguardar container de categorias
+        container = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.CategoryList"))
         )
-        # ADICIONAR ESTA LINHA PARA PRINTAR QUANTOS PRODUTOS:
-        print(f"   📊 {len(produtos)} produtos encontrados nesta categoria")
-    except:
-        print(f"   ⚠ Nenhum produto encontrado")
-        continue
-
-    # =======================================================
-    # LOOP POR TODOS OS PRODUTOS
-    # =======================================================
-    for posicao, prod in enumerate(produtos, 1):
-        nome = prod.text.strip()
-        if not nome:
+        
+        # Re-coletar categorias a cada iteração
+        categorias = container.find_elements(By.CSS_SELECTOR, "a")
+        
+        if idx >= len(categorias):
+            print(f"\n✅ Todas as {len(categorias)} categorias processadas!")
+            break
+            
+        categoria = categorias[idx]
+        subcategoria = categoria.text.strip()
+        
+        if not subcategoria:  # Pular categorias sem nome
             continue
             
-        link = encurtar_link(prod.get_attribute("href"))
-        if not link or not link.startswith("http"):
+        print("\n" + "=" * 60)
+        print(f"🟦 PROCESSANDO SUBCATEGORIA {idx+1}")
+        print(f"   📌 Nome: {subcategoria}")
+        print("=" * 60)
+
+        # Obter link ANTES de clicar (mais seguro)
+        link_categoria = categoria.get_attribute("href")
+        if not link_categoria:
+            print("   ⚠ Link da categoria não encontrado, pulando...")
             continue
-
-        # Abrir produto em nova aba
-        driver.execute_script(f"window.open('{link}');")
-        driver.switch_to.window(driver.window_handles[1])
-        time.sleep(1)  # REDUZIDO
-
-        # Extrair dados básicos (MAIS RÁPIDO - sem prints)
-        try:
-            preco = extrair_preco_avista(driver)
-        except:
-            preco = "Preço não identificado"
-        
-        asin = extrair_asin(link)
-        
-        try:
-            nota_geral, qtd_avaliacoes = extrair_nota_geral_e_avaliacoes(driver)
-        except:
-            nota_geral, qtd_avaliacoes = "N/A", "N/A"
-
-        
-        # ======================================================
-        # COLETAR COMENTÁRIOS — VIA CLICK NAS ESTRELAS ⭐⭐⭐⭐⭐
-        # ======================================================
-
-        comentarios = []
-        comentarios_coletados = 0
-
-        # 1️⃣ Clicar nas estrelas (abre direto o modal correto)
-        try:
-            estrelas = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "a.ui-pdp-review__label"))
-            )
-            driver.execute_script("arguments[0].click();", estrelas)
-            print("Avaliações clicadas (estrelas)")
-        except:
-            print("   ⚠ Não foi possível clicar nas estrelas")
-
+            
+        # Navegar diretamente para o link da categoria
+        driver.get(link_categoria)
         time.sleep(2)
-
-       # Detectar iframe (se existir)
-        iframe_encontrado = False
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-
-        for iframe in iframes:
-            src = iframe.get_attribute("src") or ""
-            if "reviews" in src or "opini" in src:
-                driver.switch_to.frame(iframe)
-                iframe_encontrado = True
-                print("✅ Avaliações renderizadas via iframe")
-                break
-
-        if not iframe_encontrado:
-            print("✅ Avaliações renderizadas direto no DOM (sem iframe)")
-
-        # 3️⃣ Aguardar seção principal
-        try:
-            WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "section[data-testid='reviews-desktop']"))
-            )
-        except:
-            print("   ⚠ Seção de reviews não carregou")
-
-        # 4️⃣ Scroll para carregar comentários
-        for _ in range(8):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1)
-
-        # 5️⃣ Coletar até 15 comentários
-        comentarios_elementos = driver.find_elements(
-            By.CSS_SELECTOR, "article.ui-review-capability-comments__comment"
-        )
-
-        for comentario_el in comentarios_elementos[:15]:
-            texto = extrair_texto_comentario(comentario_el)
-            nota = extrair_nota_individual(comentario_el)
-            data_comentario = extrair_data_comentario(comentario_el)
-
-            comentarios.append({
-                "Comentário": texto,
-                "Nota": nota,
-                "Data Comentário": data_comentario
-            })
-            comentarios_coletados += 1
-
-        print(f"✔ Coletados {comentarios_coletados} comentários")
-
-        driver.switch_to.default_content()
-
-
-
-        # Adicionar cada comentário como uma linha separada
-        for comentario in comentarios:
-            dados.append({
-                "Posição Global": posicao_global,
-                "Posição Categoria": posicao,
-                "Subcategoria": subcategoria,
-                "ASIN": asin,
-                "Nome": nome,
-                "Preço à vista": preco,
-                "Nota Geral": nota_geral,
-                "Qtd. Avaliações": qtd_avaliacoes,
-                "Nota Comentário": comentario["Nota"],
-                "Data Comentário": comentario["Data Comentário"],
-                "Comentário": comentario["Comentário"],
-                "Link": link
-            })
-
         
-        # ADICIONAR PRINT FINAL DO PRODUTO:
-        print(f"   ✔ Produto {posicao}/{len(produtos)} finalizado - {comentarios_coletados} comentários")
+        print(f"   🏷️ Título da página: {driver.title}")
+        print(f"   📍 Subcategoria ativa: {subcategoria}")
+        print("   🔍 Carregando todos os produtos...")
 
-        posicao_global += 1
+        # Aguardar produtos carregarem
+        try:
+            produtos = WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.poly-component__title"))
+            )
+            print(f"   ✅ Total de {len(produtos)} produtos encontrados")
+        except Exception as e:
+            print(f"   ⚠ Nenhum produto encontrado: {e}")
+            continue
+        
+        # =======================================================
+        # LOOP POR TODOS OS PRODUTOS (mesmo código)
+        # =======================================================
+        for posicao, prod in enumerate(produtos, 1):
+            print(f"\n   📦 Processando produto {posicao}/{len(produtos)}")
+            
+            try:
+                nome = prod.text.strip()
+                if not nome:
+                    continue
+                    
+                link = encurtar_link(prod.get_attribute("href"))
+                if not link or not link.startswith("http"):
+                    continue
 
-        # Fechar aba do produto e voltar para lista - MAIS RÁPIDO
-        driver.close()
-        driver.switch_to.window(driver.window_handles[0])
-        time.sleep(0.3)
+                # Abrir produto em nova aba
+                driver.execute_script(f"window.open('{link}');")
+                driver.switch_to.window(driver.window_handles[1])
+                time.sleep(1)
 
-    # Fechar a aba atual e abrir nova para próxima categoria
-    if len(driver.window_handles) > 1:
-        driver.close()
-        driver.switch_to.window(driver.window_handles[0])
+                # Extrair dados básicos
+                try:
+                    preco = extrair_preco_avista(driver)
+                except:
+                    preco = "Preço não identificado"
+                
+                asin = extrair_asin(link)
+                print(f"      🔗 ASIN extraído: {asin} (do link: {link})")
+                # Log para debugging
+                if asin == "N/A":
+                    print(f"      ⚠️ ATENÇÃO: ASIN não extraído do link: {link}")
+                
+                try:
+                    nota_geral, qtd_avaliacoes = extrair_nota_geral_e_avaliacoes(driver)
+                except:
+                    nota_geral, qtd_avaliacoes = "N/A", "N/A"
+                
+                try:
+                    caracteristicas = extrair_caracteristicas(driver)
+                except:
+                    caracteristicas = "Não Possui"
+
+                # ======================================================
+                # COLETAR COMENTÁRIOS
+                # ======================================================
+                comentarios = []
+                comentarios_coletados = 0
+
+                # 1️⃣ Clicar nas estrelas
+                try:
+                    estrelas = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.ui-pdp-review__label"))
+                    )
+                    driver.execute_script("arguments[0].click();", estrelas)
+                    print("      ⭐ Avaliações clicadas (estrelas)")
+                except:
+                    print("      ⚠ Não foi possível clicar nas estrelas")
+
+                time.sleep(2)
+
+                # 2️⃣ Clicar em "Mostrar todas as opiniões"
+                try:
+                    botao_mais = WebDriverWait(driver, 4).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='see-more']"))
+                    )
+                    driver.execute_script("arguments[0].click();", botao_mais)
+                    print("      🔎 Botão 'Mostrar todas as opiniões' clicado")
+                    time.sleep(2)
+                except:
+                    print("      ℹ️ Botão 'Mostrar todas' não encontrado (ok)")
+
+                # Detectar iframe
+                iframe_encontrado = False
+                iframes = driver.find_elements(By.TAG_NAME, "iframe")
+
+                for iframe in iframes:
+                    src = iframe.get_attribute("src") or ""
+                    if "reviews" in src or "opini" in src:
+                        driver.switch_to.frame(iframe)
+                        iframe_encontrado = True
+                        print("      ✅ Avaliações renderizadas via iframe")
+                        break
+
+                if not iframe_encontrado:
+                    print("      ✅ Avaliações renderizadas direto no DOM")
+
+                # 3️⃣ Aguardar seção principal
+                try:
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "section[data-testid='reviews-desktop']"))
+                    )
+                except:
+                    print("      ⚠ Seção de reviews não carregou")
+
+                # 4️⃣ Scroll para carregar comentários
+                for _ in range(5):
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+                    time.sleep(0.8)
+
+                # 5️⃣ Coletar até 10 comentários
+                comentarios_elementos = driver.find_elements(
+                    By.CSS_SELECTOR, "article.ui-review-capability-comments__comment"
+                )
+
+                for comentario_el in comentarios_elementos[:10]:
+                    texto = extrair_texto_comentario(comentario_el)
+                    nota = extrair_nota_individual(comentario_el)
+                    data_comentario = extrair_data_comentario(comentario_el)
+
+                    comentarios.append({
+                        "Comentário": texto,
+                        "Nota": nota,
+                        "Data Comentário": data_comentario
+                    })
+                    comentarios_coletados += 1
+
+                driver.switch_to.default_content()
+
+                print(f"      📝 Nome: {nome[:80]}{'...' if len(nome) > 80 else ''}")
+                print(f"      💰 Preço: {preco}")
+                print(f"      ⭐ Nota: {nota_geral}")
+                print(f"      📊 Avaliações: {qtd_avaliacoes}")
+                
+                if caracteristicas:
+                    print("      🔧 Características:")
+                    for nome_carac, valor in caracteristicas.items():
+                        print(f"         - {nome_carac}: {valor}")
+                else:
+                    print("      🔧 Características: Nenhuma")
+                    
+                print(f"      🗨️ Comentários coletados: {comentarios_coletados}")
+
+                # Adicionar cada comentário como uma linha separada
+                for comentario in comentarios:
+                    dados.append({
+                        "Posição Global": posicao_global,
+                        "Posição Categoria": posicao,
+                        "Subcategoria": subcategoria,
+                        "ASIN": asin,
+                        "Nome": nome,
+                        "Preço à vista": preco,
+                        "Nota Geral": nota_geral,
+                        "Qtd. Avaliações": qtd_avaliacoes,
+                        "Caractéristicas": caracteristicas,
+                        "País": "Brasil",
+                        "Nota Comentário": comentario["Nota"],
+                        "Data Comentário": comentario["Data Comentário"],
+                        "Comentário": comentario["Comentário"],
+                        "Link": link
+                    })
+
+                print(f"      ✅ Produto finalizado com sucesso")
+                posicao_global += 1
+
+            except Exception as e:
+                print(f"      ❌ Erro no produto {posicao}: {str(e)[:100]}...")
+            finally:
+                # Fechar aba do produto SEMPRE
+                if len(driver.window_handles) > 1:
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                    time.sleep(0.5)
+
+    except Exception as e:
+        print(f"\n❌ Erro na categoria {idx+1}: {str(e)[:100]}...")
+        print("   Continuando para próxima categoria...")
+        continue
+
+# Resto do código permanece igual...
 
 # Salvar resultados
 if dados:
@@ -396,6 +520,12 @@ if dados:
     # Criar resumo com apenas os dados básicos (primeiro comentário de cada produto)
     df_resumo = df.drop_duplicates(subset=['ASIN', 'Nome'], keep='first')
     df_resumo.to_csv(file_resumo, index=False, encoding="utf-8-sig", sep=";")
+    
+    print("\n" + "=" * 60)
+    print("🎉 SCRAPING FINALIZADO COM SUCESSO")
+    print(f"📦 Total de produtos processados: {posicao_global - 1}")
+    print(f"📝 Total de registros coletados: {len(df)}")
+    print("=" * 60)
 
     print(f"\n🎉 Relatórios gerados:")
     print(f"1. {file_full} - {len(df)} registros")
