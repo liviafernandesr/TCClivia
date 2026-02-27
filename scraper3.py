@@ -116,7 +116,11 @@ def verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios):
         
         # Tenta criar o novo driver com tratamento de erro
         try:
-            novo_driver = uc.Chrome(options=options)
+            novo_driver = uc.Chrome(
+            version_main=144,   #CORREÇÃO
+            options=options
+        )
+
             
             stealth(novo_driver,
                 languages=["pt-BR", "pt"],
@@ -389,12 +393,12 @@ def extrair_variacoes_produto(soup):
                                 itens = elem.find_all('li')
                                 for item in itens:
                                     opcao = item.get_text(strip=True)
-                                    if opcao and len(opcao) < 30:
+                                    if opcao and len(opcao) < 50:
                                         opcoes.append(opcao)
                             else:
                                 # Texto direto
                                 opcao = elem.get_text(strip=True)
-                                if opcao and len(opcao) < 30 and opcao != titulo:
+                                if opcao and len(opcao) < 50 and opcao != titulo:
                                     opcoes.append(opcao)
                         
                         if titulo and opcoes:
@@ -881,7 +885,7 @@ def extrair_produtos_da_subcategoria(driver, link_subcategoria):
         # ============================================
         # 4. MÉTODO DIRETO: BUSCAR TODOS OS LINKS /dp/
         # ============================================
-        if len(produtos) < 30:  # Se ainda tem poucos
+        if len(produtos) < 45:  # Se ainda tem poucos
             print("   🔍 Buscando todos os links /dp/ na página...")
             
             # Usar regex para encontrar todos os ASINs na página
@@ -912,7 +916,7 @@ def extrair_produtos_da_subcategoria(driver, link_subcategoria):
             print(f"   📋 Primeiros 10 ASINs: {produtos[:10]}")
         
         # Verificar quantidade
-        if len(produtos) < 40:
+        if len(produtos) < 45:
             print(f"   ⚠ Apenas {len(produtos)} produtos - pode não ter carregado todos")
             
     except Exception as e:
@@ -939,32 +943,17 @@ def main():
         print("❌ Cookies não encontrados. Rode 'login_amazon.py' primeiro.")
         return
 
-    # Configuração do Chrome
-    options = Options()
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-notifications")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-    # options.add_argument("--headless")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    stealth(driver,
-    languages=["pt-BR", "pt"],
-    vendor="Google Inc.",
-    platform="Win32",
-    webgl_vendor="Intel Inc.",
-    renderer="Intel Iris OpenGL Engine",
-    fix_hairline=True,
-)
-    contador_reinicios = 0
-
     try:
         print("🔄 Iniciando navegador indetectável...")
         # Cria o primeiro driver usando a lógica do UC
         options = uc.ChromeOptions()
         options.add_argument("--window-size=1920,1080")
-        driver = uc.Chrome(options=options)
+        # options.add_argument("--headless")
+
+        driver = uc.Chrome(
+        version_main=144,   # FIXAÇÃO CORRETA
+        options=options
+    )
         
         stealth(driver,
             languages=["pt-BR", "pt"],
@@ -996,6 +985,7 @@ def main():
         
         todos_dados = []
         posicao_global = 1
+        contador_reinicios = 0 
         
         # =======================================================
         # LOOP POR CADA SUBCATEGORIA
@@ -1038,7 +1028,7 @@ def main():
                     continue
                 
                 print(f"   📊 {len(asins)} produtos encontrados")
-                asins = asins[:30] # LIMITAÇÃO PARA TESTE
+                asins = asins[:50] # LIMITAÇÃO PARA TESTE
                 
                 # 4. LOOP POR TODOS OS PRODUTOS (Agora dentro do try da categoria)
                 for posicao_categoria, asin in enumerate(asins, 1):
@@ -1126,11 +1116,11 @@ def main():
             df = df[colunas]
             
             # Arquivo 1: FULL (Todos os comentários)
-            file_full = f"resultados_amazon/mais_vendidos_amazon_FULL_{ts}.csv"
+            file_full = f"data/resultados_amazon/mais_vendidos_amazon_FULL_{ts}.csv"
             df.to_csv(file_full, index=False, encoding="utf-8-sig", sep=";")
             
             # Arquivo 2: RESUMO (Apenas 1 linha por produto - primeiro comentário)
-            file_resumo = f"resultados_amazon/mais_vendidos_amazon_SAMPLE_{ts}.csv"
+            file_resumo = f"data/resultados_amazon/mais_vendidos_amazon_SAMPLE_{ts}.csv"
             df_resumo = df.drop_duplicates(subset=['ASIN', 'Nome'], keep='first')
             df_resumo.to_csv(file_resumo, index=False, encoding="utf-8-sig", sep=";")
 

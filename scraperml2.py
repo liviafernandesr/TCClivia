@@ -511,17 +511,17 @@ if dados:
     ts = datetime.now().strftime("%Y-%m-d_%H-%M")
     
     # Arquivo 1: FULL (Todos os comentários)
-    file_full = f"resultados/mais_vendidos_ml_FULL_{ts}.csv"
+    file_full = f"data/resultados_ml/mais_vendidos_ml_FULL_{ts}.csv"
     df.to_csv(file_full, index=False, encoding="utf-8-sig", sep=";")
     
     # Arquivo 2: RESUMO (Sem duplicatas de ASIN, apenas 1 linha por produto)
-    file_resumo = f"resultados/mais_vendidos_ml_SAMPLE_{ts}.csv"
+    file_resumo = f"data/resultados_ml/mais_vendidos_ml_SAMPLE_{ts}.csv"
     
     # Criar resumo com apenas os dados básicos (primeiro comentário de cada produto)
     df_resumo = df.drop_duplicates(subset=['ASIN', 'Nome'], keep='first')
     df_resumo.to_csv(file_resumo, index=False, encoding="utf-8-sig", sep=";")
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 60) 
     print("🎉 SCRAPING FINALIZADO COM SUCESSO")
     print(f"📦 Total de produtos processados: {posicao_global - 1}")
     print(f"📝 Total de registros coletados: {len(df)}")
