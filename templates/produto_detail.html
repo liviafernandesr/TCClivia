@@ -1,0 +1,397 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="mb-4">
+  <a href="/buscar" class="btn btn-outline-secondary">← Voltar à Busca</a>
+</div>
+
+<div class="produto-header mb-5">
+  <h1>{{ produto['Produto Amazon'] }}
+    {% if produto.get('Melhor Preço') == 'Amazon' %}
+      <span class="badge badge-price-purple badge-vantagem text-white">Mais barato na Amazon</span>
+    {% elif produto.get('Melhor Preço') == 'Mercado Livre' %}
+      <span class="badge badge-price-purple badge-vantagem text-white">Mais barato no Mercado Livre</span>
+    {% elif produto.get('Melhor Preço') == 'Empate' %}
+      <span class="badge badge-price-equal badge-vantagem">Preços iguais</span>
+    {% endif %}
+  </h1>
+  <h6 class="text-muted mb-3">Nota Geral: <span class="nota-geral">{{ produto['Nota Geral Ponderada'] }}</span></h6>
+</div>
+
+<div class="row mb-5">
+  <div class="col-lg-6">
+    <div class="plataforma-section">
+      <h3 class="mb-4">
+        <span style="font-size: 1.5em;">🛒</span> Amazon
+      </h3>
+      <div class="card-content">
+        <div class="info-row">
+          <span class="label">Nota:</span>
+          <strong>{{ produto['Nota Amazon'] }}</strong>
+        </div>
+        <div class="info-row">
+          <span class="label">Preço:</span>
+          <strong class="price {{ produto.get('amazon_price_class', '') }}">{{ produto['Preço Prod Amazon'] }}</strong>
+        </div>
+        <div class="info-row">
+          <span class="label">Avaliações:</span>
+          <strong>{{ produto['Avaliações Amazon'] }}</strong>
+        </div>
+        {% if produto['Link Amazon'] %}
+        <div class="mt-4">
+          <a href="{{ produto['Link Amazon'] }}" target="_blank" class="btn btn-primary w-100">
+            Comprar na Amazon
+          </a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="plataforma-section">
+      <h3 class="mb-4">
+        <span style="font-size: 1.5em;">📦</span> Mercado Livre
+      </h3>
+      <div class="card-content">
+        <div class="info-row">
+          <span class="label">Nota:</span>
+          <strong>{{ produto['Nota Mercado Livre'] }}</strong>
+        </div>
+        <div class="info-row">
+          <span class="label">Preço:</span>
+          <strong class="price {{ produto.get('ml_price_class', '') }}">{{ produto['Preço Prod ML'] }}</strong>
+        </div>
+        <div class="info-row">
+          <span class="label">Avaliações:</span>
+          <strong>{{ produto['Avaliações ML'] }}</strong>
+        </div>
+        {% if produto['Link Mercado Livre'] %}
+        <div class="mt-4">
+          <a href="{{ produto['Link Mercado Livre'] }}" target="_blank" class="btn btn-primary w-100">
+            Comprar no Mercado Livre
+          </a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<div class="resumo-ia-section mb-5">
+  <h2 class="mb-3">Na boca do povo:</h2>
+  {% if resumo_comentarios['modo'] == 'ia_indisponivel' %}
+  <div class="alert alert-warning mb-4" role="alert">
+    Nao foi possivel gerar o resumo com IA nesta tentativa.
+    {% if resumo_comentarios.get('erro') %}
+      <br><small>{{ resumo_comentarios['erro'] }}</small>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="resumo-card resumo-amazon">
+        <h4>Opiniões em Destaque - Amazon</h4>
+        <div class="resumo-count">{{ comentarios['amazon']|length }} comentarios analisados</div>
+        <p>{{ resumo_comentarios['amazon'] }}</p>
+        <div class="resumo-ia-badge">Resumo de opinioes gerado por IA</div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="resumo-card resumo-ml">
+        <h4>Opiniões em Destaque - Mercado Livre</h4>
+        <div class="resumo-count">{{ comentarios['ml']|length }} comentarios analisados</div>
+        <p>{{ resumo_comentarios['ml'] }}</p>
+        <div class="resumo-ia-badge">Resumo de opinioes gerado por IA</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="comentarios-section">
+  <h2 class="mb-4">💬 Comentários e Avaliações</h2>
+
+  <div class="row">
+    <!-- Amazon Comments -->
+    <div class="col-lg-6">
+      {% if comentarios['amazon'] %}
+      <div class="comentarios-plataforma">
+        <h4 class="mb-3">
+          <span style="color: #FF9900;">Amazon</span>
+          <small class="text-muted">({{ comentarios['amazon']|length }} comentários)</small>
+        </h4>
+        <div class="comments-list">
+          {% for comment in comentarios['amazon'] %}
+          <div class="comment-card">
+            <div class="comment-header">
+              <div class="stars">
+                {% if comment['nota'] %}
+                  {% for i in range(5) %}
+                    {% if i < (comment['nota']|to_stars) %}
+                      ⭐
+                    {% else %}
+                      ☆
+                    {% endif %}
+                  {% endfor %}
+                  <span class="rating-text">({{ comment['nota'] }} estrelas)</span>
+                {% endif %}
+              </div>
+              {% if comment['data'] %}
+                <span class="comment-date">{{ comment['data'] }}</span>
+              {% endif %}
+            </div>
+            <p class="comment-text">{{ comment['texto'] }}</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-info">
+        Nenhum comentário da Amazon para este produto.
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ML Comments -->
+    <div class="col-lg-6">
+      {% if comentarios['ml'] %}
+      <div class="comentarios-plataforma">
+        <h4 class="mb-3">
+          <span style="color: #FFB81D;">Mercado Livre</span>
+          <small class="text-muted">({{ comentarios['ml']|length }} comentários)</small>
+        </h4>
+        <div class="comments-list">
+          {% for comment in comentarios['ml'] %}
+          <div class="comment-card">
+            <div class="comment-header">
+              <div class="stars">
+                {% if comment['nota'] %}
+                  {% for i in range(5) %}
+                    {% if i < (comment['nota']|to_stars) %}
+                      ⭐
+                    {% else %}
+                      ☆
+                    {% endif %}
+                  {% endfor %}
+                  <span class="rating-text">({{ comment['nota'] }} estrelas)</span>
+                {% endif %}
+              </div>
+              {% if comment['data'] %}
+                <span class="comment-date">{{ comment['data'] }}</span>
+              {% endif %}
+            </div>
+            <p class="comment-text">{{ comment['texto'] }}</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-info">
+        Nenhum comentário do Mercado Livre para este produto.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if not comentarios['amazon'] and not comentarios['ml'] %}
+    <div class="alert alert-warning mt-3">
+      Nenhum comentário disponível para este produto no momento.
+    </div>
+  {% endif %}
+</div>
+
+<style>
+  .plataforma-section {
+    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+    border: 2px solid #e0e7ff;
+    border-radius: 1rem;
+    padding: 2rem;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.1);
+  }
+
+  .plataforma-section h3 {
+    color: #667eea;
+    border-bottom: 2px solid #e0e7ff;
+    padding-bottom: 1rem;
+  }
+
+  .card-content {
+    padding: 1rem 0;
+  }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #f0f4ff;
+  }
+
+  .label {
+    color: #666;
+    font-weight: 600;
+  }
+
+  .price {
+    font-size: 1.3rem;
+    color: #FF9900;
+  }
+
+  .price-cheap {
+    color: #28a745 !important;
+    font-weight: 700;
+  }
+
+  .price-expensive {
+    color: #f0ad4e !important;
+    font-weight: 700;
+  }
+
+  .comentarios-section {
+    margin-top: 2rem;
+  }
+
+  .resumo-ia-section {
+    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+    border: 2px solid #e0e7ff;
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 14px rgba(102, 126, 234, 0.09);
+  }
+
+  .resumo-ia-section h2 {
+    color: #4b5fcf;
+    font-weight: 800;
+  }
+
+  .resumo-meta {
+    border: 1px solid #dae3ff;
+  }
+
+  .resumo-card {
+    background: #ffffff;
+    border-radius: 0.85rem;
+    padding: 1.1rem;
+    height: 100%;
+    border-left: 5px solid #667eea;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.08);
+  }
+
+  .resumo-card h4 {
+    font-weight: 700;
+    margin-bottom: 0.15rem;
+    color: #1d2d50;
+  }
+
+  .resumo-count {
+    color: #6e7d99;
+    font-size: 0.96rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .resumo-card p {
+    margin: 0;
+    color: #2f3655;
+    line-height: 1.6;
+  }
+
+  .resumo-ia-badge {
+    margin-top: 0.9rem;
+    color: #5f6f8b;
+    font-size: 0.96rem;
+  }
+
+  .resumo-amazon {
+    border-left-color: #ff9900;
+  }
+
+  .resumo-ml {
+    border-left-color: #1d9bf0;
+  }
+
+  .comentarios-plataforma {
+    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+    border: 2px solid #e0e7ff;
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 2px 10px rgba(102, 126, 234, 0.08);
+  }
+
+  .comentarios-plataforma h4 {
+    color: #667eea;
+    border-bottom: 2px solid #e0e7ff;
+    padding-bottom: 0.75rem;
+  }
+
+  .comments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .comment-card {
+    background: #ffffff;
+    border-left: 4px solid #667eea;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.08);
+    transition: all 0.3s ease;
+  }
+
+  .comment-card:hover {
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.15);
+    transform: translateY(-2px);
+  }
+
+  .comment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .stars {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .rating-text {
+    font-size: 0.9rem;
+    color: #666;
+  }
+
+  .comment-date {
+    font-size: 0.85rem;
+    color: #999;
+  }
+
+  .comment-text {
+    color: #333;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .produto-header h1 {
+    font-size: 2rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .produto-header h1 .badge {
+    /* Keep badge text readable even when h1 uses gradient text clipping */
+    -webkit-text-fill-color: currentColor;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+  }
+</style>
+{% endblock %}

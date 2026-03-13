@@ -2,6 +2,12 @@ import glob
 import os
 import pandas as pd
 
+
+def norm_str(x):
+    if pd.isna(x):
+        return ""
+    return str(x).strip()
+
 def arquivo_mais_recente(padrao):
     arquivos = glob.glob(padrao)
     if not arquivos:
@@ -49,8 +55,185 @@ def carregar_todos_ml():
     arquivos = glob.glob("data/resultados_ml/mais_vendidos_ml_*.csv")
     if not arquivos:
         return pd.DataFrame()
-    dfs = [pd.read_csv(a, sep=";", encoding="utf-8-sig") for a in arquivos]
+    dfs = [pd.read_csv(a, sep=';', encoding='utf-8-sig') for a in arquivos]
     return pd.concat(dfs, ignore_index=True)
+
+
+def carregar_ultimos_full(padrao, n=5):
+    """Retorna lista de (df, ctime, path) para os últimos *n* arquivos que batem no padrão.
+
+    A lista é ordenada do mais recente para o mais antigo.
+    """
+    arquivos = arquivos_ultimos_n(padrao, n)
+    resultado = []
+    for arq in arquivos:
+        try:
+            df = pd.read_csv(arq, sep=";", encoding="utf-8-sig")
+        except Exception:
+            continue
+        try:
+            ctime = os.path.getctime(arq)
+        except Exception:
+            ctime = 0
+        resultado.append((df, ctime, arq))
+    # already arquivos_ultimos_n returns most recent first; ensure ordering
+    resultado.sort(key=lambda x: x[1], reverse=True)
+    return resultado
+
+
+def carregar_ultimos_amazon_full(n=5):
+    return carregar_ultimos_full("data/resultados_amazon/mais_vendidos_amazon_FULL_*.csv", n)
+
+
+def carregar_ultimos_ml_full(n=5):
+    return carregar_ultimos_full("data/resultados_ml/mais_vendidos_ml_FULL_*.csv", n)
+
+
+def _cache_dir():
+    p = os.path.join("data", "cache")
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _cache_path(platform):
+    return os.path.join(_cache_dir(), f"comments_{platform}.csv")
+
+
+def carregar_cache_comentarios(platform):
+    path = _cache_path(platform)
+    # ensure cache directory exists even if file is missing
+    if not os.path.exists(path):
+        # include link column for ML entries (may be blank for Amazon)
+        return pd.DataFrame(columns=["produto", "texto", "nota", "data", "origem", "ctime", "link"])
+    try:
+        df = pd.read_csv(path, sep=';', encoding='utf-8-sig')
+        # older caches might not have a "link" column; add it for consistency
+        if 'link' not in df.columns:
+            df['link'] = ''
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["produto", "texto", "nota", "data", "origem", "ctime", "link"])
+
+
+def salvar_cache_comentarios(platform, df):
+    path = _cache_path(platform)
+    _cache_dir()
+    df.to_csv(path, index=False, sep=';', encoding='utf-8-sig')
+
+
+def atualizar_cache_comentarios(platform, n=5):
+    """Atualiza (ou cria) o cache de comentários para `platform`.
+
+    - Mantém comentários já existentes no cache.
+    - Processa os últimos `n` FULLs da plataforma e adiciona/atualiza comentários
+      no cache, preferindo as versões mais recentes quando há duplicatas de texto.
+    - Para Mercado Livre, remapeia o campo de produto usando o nome presente no
+      arquivo MASTER da comparação (coluna "Produto Mercado Livre"). Esse passo
+      garante que a busca por comentários use os mesmos nomes exibidos na
+      interface.
+
+    Retorna o DataFrame atualizado do cache.
+    """
+    platform = platform.lower()
+    if platform.startswith('am'):
+        fulls = carregar_ultimos_amazon_full(n)
+    else:
+        fulls = carregar_ultimos_ml_full(n)
+
+    # carregar cache pré-existente (pode não existir)
+    cache = carregar_cache_comentarios(platform)
+    # cache antigo de ML pode não ter coluna 'link' ou todos valores vazios;
+    # nesse caso é melhor ignorá-lo e reconstruir do zero para garantir que os
+    # nomes fiquem alinhados ao MASTER.
+    if platform.startswith('ml') and not cache.empty:
+        if 'link' in cache.columns and cache['link'].astype(str).str.strip().eq('').all():
+            cache = pd.DataFrame(columns=cache.columns)
+    # índice por texto para evitar duplicatas e permitir sobrescrever
+    mapa = {str(r['texto']): r for _, r in cache.iterrows()} if not cache.empty else {}
+
+    # construir mapeamento link->nome_master para ML (se aplicável)
+    master_map = {}
+    if platform.startswith('ml'):
+        master_path = arquivo_mais_recente("data/comparacoes/comparacao_categorias_MASTER_*.csv")
+        if master_path:
+            try:
+                mdf = pd.read_csv(master_path, sep=';', encoding='utf-8-sig')
+                # normalizar nomes de coluna caso haja problemas de encoding
+                rename_map = {
+                    'Produto Mercado Livre': 'Produto Mercado Livre',
+                    'Link Mercado Livre': 'Link Mercado Livre',
+                }
+                mdf = mdf.rename(columns=rename_map)
+                if 'Link Mercado Livre' in mdf.columns and 'Produto Mercado Livre' in mdf.columns:
+                    for _, mr in mdf.iterrows():
+                        link = norm_str(mr.get('Link Mercado Livre', ''))
+                        nome_ml = norm_str(mr.get('Produto Mercado Livre', ''))
+                        if link and nome_ml:
+                            master_map[link] = nome_ml
+            except Exception:
+                pass
+
+    # processar do mais antigo para o mais recente para que os mais recentes
+    # sobrescrevam entradas anteriores
+    for df, ctime, path in reversed(fulls):
+        if 'Nome' not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            texto = str(row.get('Comentário', '')).strip()
+            if not texto:
+                continue
+            produto = str(row.get('Nome', '')).strip()
+            link = str(row.get('Link', '')).strip() if 'Link' in row else ''
+            # se tivermos um nome mestre mapeado para este link, use-o
+            if platform.startswith('ml') and link and link in master_map:
+                produto = master_map[link]
+            nota = row.get('Nota Comentário', '')
+            data = row.get('Data Comentário', '')
+            key = texto
+            mapa[key] = {
+                'produto': produto,
+                'texto': texto,
+                'nota': nota,
+                'data': data,
+                'origem': path,
+                'ctime': ctime,
+                'link': link,
+            }
+
+    if mapa:
+        novos = list(mapa.values())
+        df_cache = pd.DataFrame(novos)
+    else:
+        df_cache = pd.DataFrame(columns=["produto", "texto", "nota", "data", "origem", "ctime", "link"])
+
+    # aplicar remapeamento em toda tabela caso informações venham de cache antigo
+    if platform.startswith('ml') and master_map:
+        def map_produto(r):
+            lk = norm_str(r.get('link', ''))
+            return master_map.get(lk, r.get('produto', ''))
+        df_cache['produto'] = df_cache.apply(map_produto, axis=1)
+
+    salvar_cache_comentarios(platform, df_cache)
+    return df_cache
+
+
+def buscar_comentarios_cache_por_produto(platform, produto_nome):
+    df = carregar_cache_comentarios(platform)
+    if df.empty:
+        return []
+    nome_norm = norm_str(produto_nome).upper()
+    def match(nome):
+        return norm_str(nome).upper() == nome_norm
+    df_filtrado = df[df['produto'].astype(str).apply(match)]
+    resultados = []
+    for _, r in df_filtrado.iterrows():
+        resultados.append({
+            'texto': r.get('texto', ''),
+            'nota': r.get('nota', ''),
+            'data': r.get('data', ''),
+            'origem': r.get('origem', ''),
+        })
+    return resultados
 
 
 # --------- novos helpers adicionados pela solicitação ------------
@@ -106,6 +289,14 @@ def carregar_comparacao_master_com_precos():
         return pd.DataFrame()
     arq_master = max(arquivos_master, key=os.path.getctime)
     df = pd.read_csv(arq_master, sep=";", encoding="utf-8-sig")
+    # corrigir eventuais problemas de codificação nos nomes de coluna
+    rename_map = {
+        'Avalia��es Amazon': 'Avaliações Amazon',
+        'Avalia��es ML': 'Avaliações ML',
+        'Pre�o Prod Amazon': 'Preço Prod Amazon',
+        'Pre�o Prod ML': 'Preço Prod ML'
+    }
+    df = df.rename(columns=rename_map)
 
     # obtém os últimos cinco arquivos "sample" de cada plataforma
     amz_sample = arquivos_ultimos_n("data/resultados_amazon/mais_vendidos_amazon_SAMPLE_*.csv", 5)
@@ -117,6 +308,7 @@ def carregar_comparacao_master_com_precos():
 
     df["Produto Amazon"] = df["Produto Amazon"].astype(str)
     df["Produto Mercado Livre"] = df["Produto Mercado Livre"].astype(str)
+    # preços já existem, mas vamos preencher apenas quando estiverem vazios
     df["Preço Prod Amazon"] = df["Produto Amazon"].map(amz_dict).fillna("")
     df["Preço Prod ML"] = df["Produto Mercado Livre"].map(ml_dict).fillna("")
 

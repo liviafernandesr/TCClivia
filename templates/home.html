@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+  .hero-section {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 75%, #4facfe 100%);
+    background-size: 400% 400%;
+    animation: gradientShift 15s ease infinite;
+    min-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: white;
+    border-radius: .5rem;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .hero-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('/static/images/shopping_mobile.jpg');
+    background-size: cover;
+    background-position: center;
+    opacity: 0.15;
+    z-index: 1;
+  }
+  
+  .hero-content {
+    max-width: 700px;
+    animation: fadeInUp 1s ease-out;
+    position: relative;
+    z-index: 2;
+    text-shadow: 2px 2px 12px rgba(0, 0, 0, 0.3);
+  }
+  
+  .hero-title-main {
+    font-size: 5rem;
+    font-weight: 900;
+    margin-bottom: 1.5rem;
+    letter-spacing: 3px;
+    background: linear-gradient(45deg, #ffffff, #e0e7ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .hero-subtitle {
+    font-size: 1.6rem;
+    font-weight: 400;
+    margin-bottom: 2.5rem;
+    line-height: 1.6;
+    color: #f0f4ff;
+    letter-spacing: 0.5px;
+  }
+  
+  .btn-buscar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    font-size: 1.2rem;
+    font-weight: 700;
+    padding: 1.2rem 3.5rem;
+    border-radius: 50px;
+    transition: all 0.4s ease;
+    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.4);
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  
+  .btn-buscar:hover {
+    background: linear-gradient(135deg, #764ba2 0%, #f093fb 100%);
+    transform: translateY(-4px) scale(1.05);
+    box-shadow: 0 12px 40px rgba(240, 147, 251, 0.6);
+    color: white;
+    border-color: rgba(255, 255, 255, 0.6);
+  }
+  
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(40px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  @keyframes gradientShift {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+</style>
+
+<div class="hero-section">
+  <div class="hero-content">
+    <h1 class="hero-title-main">ALTITEB</h1>
+    <p class="hero-subtitle">Centralizando avaliações, transformando dados em decisões.</p>
+    <a href="/buscar" class="btn btn-buscar">🔍 Buscar Produtos</a>
+  </div>
+</div>
+{% endblock %}
