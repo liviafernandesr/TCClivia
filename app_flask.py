@@ -779,4 +779,5 @@ def detalhe_produto(produto_nome):
 if __name__ == "__main__":
     # Watchdog reload with heavy ML deps (torch/transformers) can restart the
     # dev server during requests and trigger connection reset errors.
-    app.run(debug=False, use_reloader=False, threaded=True)
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
