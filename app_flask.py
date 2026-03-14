@@ -4,6 +4,7 @@ import re
 import importlib
 import os
 import time
+import requests
 from functools import lru_cache
 
 from utils.loaders import (
@@ -25,6 +26,9 @@ DF_ML = carregar_ml_sample()
 
 CACHE_UPDATE_INTERVAL_SECONDS = 20 * 60
 SUMMARY_PIPELINE_VERSION = "v3"
+HF_SUMMARY_MODEL = os.getenv("HF_SUMMARY_MODEL", "google/flan-t5-small")
+HF_INFERENCE_TIMEOUT = int(os.getenv("HF_INFERENCE_TIMEOUT", "45"))
+ALLOW_LOCAL_LLM_FALLBACK = os.getenv("ALLOW_LOCAL_LLM_FALLBACK", "0") == "1"
 
 # helper functions from streamlit app
 
@@ -287,6 +291,101 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     return " ".join(p for p in [abertura, meio, fim, extra] if p)
 
 
+def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
+    """Gera resumo via Hugging Face Inference API (ideal para deploy no Render)."""
+    if not comentarios:
+        return ""
+
+    linhas = []
+    total = 0
+    for c in comentarios[:8]:
+        t = _limpar_meta_texto(c)
+        if not t:
+            continue
+        t = t[:220]
+        pedaco = f"- {t}\n"
+        if total + len(pedaco) > 2200:
+            break
+        linhas.append(pedaco)
+        total += len(pedaco)
+
+    fatos = []
+    if analise.get("temas_pos"):
+        fatos.append(f"elogios recorrentes: {', '.join(analise['temas_pos'])}")
+    if analise.get("temas_neg"):
+        fatos.append(f"pontos de atencao: {', '.join(analise['temas_neg'])}")
+
+    prompt = (
+        "Resuma as opinioes de consumidores sobre um produto em portugues do Brasil. "
+        "Escreva 1 paragrafo natural com 3-5 frases, sem listas, sem repetir frases e sem descrever marketplace. "
+        "Foque em percepcao geral, elogios mais comuns e eventuais pontos de atencao.\n\n"
+        f"Dados estruturados: {'; '.join(fatos) if fatos else 'sem dados estruturados extras'}\n"
+        f"Comentarios:\n{''.join(linhas)}\n"
+        "Resumo:"
+    )
+
+    token = os.getenv("HF_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_API_TOKEN nao configurado")
+    headers = {"Content-Type": "application/json"}
+    headers["Authorization"] = f"Bearer {token}"
+
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 160,
+            "temperature": 0.2,
+            "return_full_text": False,
+        },
+    }
+
+    url = f"https://router.huggingface.co/hf-inference/models/{HF_SUMMARY_MODEL}"
+    resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"HF API erro {resp.status_code}: {resp.text[:180]}")
+
+    data = resp.json()
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        texto = data[0].get("generated_text", "")
+    elif isinstance(data, dict):
+        texto = data.get("generated_text", "")
+    else:
+        texto = ""
+
+    return _limpar_saida_llm(texto)
+
+
+def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: float = 0.2) -> str:
+    token = os.getenv("HF_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_API_TOKEN nao configurado")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            "return_full_text": False,
+        },
+    }
+    url = f"https://router.huggingface.co/hf-inference/models/{HF_SUMMARY_MODEL}"
+    resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"HF API erro {resp.status_code}: {resp.text[:180]}")
+    data = resp.json()
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        texto = data[0].get("generated_text", "")
+    elif isinstance(data, dict):
+        texto = data.get("generated_text", "")
+    else:
+        texto = ""
+    return _limpar_saida_llm(texto)
+
+
 def _limpar_meta_texto(texto: str) -> str:
     return re.sub(r"^\[[^\]]*\]\s*", "", norm_str(texto))
 
@@ -344,7 +443,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
     """Gera resumo de IA com cache por assinatura dos comentarios."""
     del assinatura_comentarios  # usado apenas como chave de cache
 
-    llm, prompt = _get_modelo_ia_resumo()
+    llm = None
+    prompt = None
 
     analise_amz = _analisar_comentarios_plataforma(
         [{"texto": _limpar_meta_texto(t), "nota": "", "data": ""} for t in textos_amz],
@@ -377,6 +477,19 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         return base + "".join(itens)
 
     def _ask(textos: tuple[str, ...], analise: dict) -> str:
+        nonlocal llm, prompt
+        # 1) Tenta API remota (mais adequada para deploy no Render)
+        try:
+            via_api = _resumo_via_hf_inference_api(textos, analise)
+            if via_api:
+                return via_api
+        except Exception:
+            if not ALLOW_LOCAL_LLM_FALLBACK:
+                return ""
+
+        # 2) Fallback local (dev/local)
+        if llm is None or prompt is None:
+            llm, prompt = _get_modelo_ia_resumo()
         contexto = _contexto_resumo(textos, analise)
         if not contexto:
             return ""
@@ -391,6 +504,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         return _limpar_saida_llm(texto)
 
     def _ask_rewrite_from_facts(analise: dict) -> str:
+        nonlocal llm, prompt
         fatos = []
         fatos.append(f"tom: {analise.get('tom', {})}")
         if analise.get("temas_pos"):
@@ -408,6 +522,16 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             f"Fatos extraidos: {'; '.join(fatos)}\n\n"
             "Resumo:"
         )
+        try:
+            out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
+            if out:
+                return out
+        except Exception:
+            if not ALLOW_LOCAL_LLM_FALLBACK:
+                return ""
+
+        if llm is None or prompt is None:
+            llm, prompt = _get_modelo_ia_resumo()
         result = llm.invoke(prompt_fatos)
         raw = result if isinstance(result, str) else str(result)
         texto = raw.strip()

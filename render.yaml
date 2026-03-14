@@ -8,3 +8,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
+      - key: HF_SUMMARY_MODEL
+        value: google/flan-t5-small
+      - key: HF_INFERENCE_TIMEOUT
+        value: "45"
+      - key: ALLOW_LOCAL_LLM_FALLBACK
+        value: "0"
