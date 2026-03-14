@@ -483,9 +483,9 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             via_api = _resumo_via_hf_inference_api(textos, analise)
             if via_api:
                 return via_api
-        except Exception:
+        except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                return ""
+                raise RuntimeError(f"Resumo IA remoto indisponivel: {exc}")
 
         # 2) Fallback local (dev/local)
         if llm is None or prompt is None:
@@ -526,9 +526,9 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
             if out:
                 return out
-        except Exception:
+        except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                return ""
+                raise RuntimeError(f"Reescrita IA remota indisponivel: {exc}")
 
         if llm is None or prompt is None:
             llm, prompt = _get_modelo_ia_resumo()
@@ -551,7 +551,10 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
         if not _resumo_ia_aceitavel(resumo_amz):
-            resumo_amz = _resumo_natural_por_fatos(analise_amz)
+            if ALLOW_LOCAL_LLM_FALLBACK:
+                resumo_amz = _resumo_natural_por_fatos(analise_amz)
+            else:
+                raise RuntimeError("IA remota retornou texto de baixa qualidade para Amazon")
             resumo_amz = _deduplicar_frases(resumo_amz)
 
     resumo_ml = "Sem comentarios suficientes no Mercado Livre."
@@ -564,7 +567,10 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)
         if not _resumo_ia_aceitavel(resumo_ml):
-            resumo_ml = _resumo_natural_por_fatos(analise_ml)
+            if ALLOW_LOCAL_LLM_FALLBACK:
+                resumo_ml = _resumo_natural_por_fatos(analise_ml)
+            else:
+                raise RuntimeError("IA remota retornou texto de baixa qualidade para Mercado Livre")
             resumo_ml = _deduplicar_frases(resumo_ml)
 
     return {
