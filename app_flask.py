@@ -5,6 +5,7 @@ import importlib
 import os
 import time
 import requests
+from urllib.parse import quote
 from functools import lru_cache
 
 from utils.loaders import (
@@ -339,10 +340,11 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
         },
     }
 
-    url = f"https://router.huggingface.co/hf-inference/models/{HF_SUMMARY_MODEL}"
+    model_path = quote(HF_SUMMARY_MODEL, safe="")
+    url = f"https://router.huggingface.co/hf-inference/models/{model_path}"
     resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
     if resp.status_code >= 400:
-        raise RuntimeError(f"HF API erro {resp.status_code}: {resp.text[:180]}")
+        raise RuntimeError(f"HF API erro {resp.status_code} (model={HF_SUMMARY_MODEL}): {resp.text[:180]}")
 
     data = resp.json()
     if isinstance(data, list) and data and isinstance(data[0], dict):
@@ -372,10 +374,11 @@ def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: flo
             "return_full_text": False,
         },
     }
-    url = f"https://router.huggingface.co/hf-inference/models/{HF_SUMMARY_MODEL}"
+    model_path = quote(HF_SUMMARY_MODEL, safe="")
+    url = f"https://router.huggingface.co/hf-inference/models/{model_path}"
     resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
     if resp.status_code >= 400:
-        raise RuntimeError(f"HF API erro {resp.status_code}: {resp.text[:180]}")
+        raise RuntimeError(f"HF API erro {resp.status_code} (model={HF_SUMMARY_MODEL}): {resp.text[:180]}")
     data = resp.json()
     if isinstance(data, list) and data and isinstance(data[0], dict):
         texto = data[0].get("generated_text", "")
