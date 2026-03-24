@@ -333,7 +333,6 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
         "parameters": {
             "max_new_tokens": 160,
             "temperature": 0.2,
-            "return_full_text": False,
         },
     }
 
@@ -354,7 +353,6 @@ def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: flo
         "parameters": {
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
-            "return_full_text": False,
         },
     }
     data = _hf_request_json(payload)
@@ -391,10 +389,7 @@ def _hf_request_json(payload: dict) -> dict | list:
     erros = []
     for model in modelos:
         model_path = quote(model, safe="")
-        urls = [
-            f"https://router.huggingface.co/hf-inference/models/{model_path}",
-            f"https://api-inference.huggingface.co/models/{model_path}",
-        ]
+        urls = [f"https://router.huggingface.co/hf-inference/models/{model_path}"]
         for url in urls:
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
