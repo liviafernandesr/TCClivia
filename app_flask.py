@@ -30,6 +30,9 @@ SUMMARY_PIPELINE_VERSION = "v3"
 HF_SUMMARY_MODEL = os.getenv("HF_SUMMARY_MODEL", "google/flan-t5-small")
 HF_INFERENCE_TIMEOUT = int(os.getenv("HF_INFERENCE_TIMEOUT", "45"))
 ALLOW_LOCAL_LLM_FALLBACK = os.getenv("ALLOW_LOCAL_LLM_FALLBACK", "0") == "1"
+HF_SUMMARY_FALLBACK_MODELS = tuple(
+    m.strip() for m in os.getenv("HF_SUMMARY_FALLBACK_MODELS", "google/flan-t5-small").split(",") if m.strip()
+)
 
 # helper functions from streamlit app
 
@@ -325,12 +328,6 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
         "Resumo:"
     )
 
-    token = os.getenv("HF_API_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("HF_API_TOKEN nao configurado")
-    headers = {"Content-Type": "application/json"}
-    headers["Authorization"] = f"Bearer {token}"
-
     payload = {
         "inputs": prompt,
         "parameters": {
@@ -340,13 +337,7 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
         },
     }
 
-    model_path = quote(HF_SUMMARY_MODEL, safe="")
-    url = f"https://router.huggingface.co/hf-inference/models/{model_path}"
-    resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"HF API erro {resp.status_code} (model={HF_SUMMARY_MODEL}): {resp.text[:180]}")
-
-    data = resp.json()
+    data = _hf_request_json(payload)
     if isinstance(data, list) and data and isinstance(data[0], dict):
         texto = data[0].get("generated_text", "")
     elif isinstance(data, dict):
@@ -358,14 +349,6 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
 
 
 def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: float = 0.2) -> str:
-    token = os.getenv("HF_API_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("HF_API_TOKEN nao configurado")
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
     payload = {
         "inputs": prompt,
         "parameters": {
@@ -374,12 +357,7 @@ def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: flo
             "return_full_text": False,
         },
     }
-    model_path = quote(HF_SUMMARY_MODEL, safe="")
-    url = f"https://router.huggingface.co/hf-inference/models/{model_path}"
-    resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"HF API erro {resp.status_code} (model={HF_SUMMARY_MODEL}): {resp.text[:180]}")
-    data = resp.json()
+    data = _hf_request_json(payload)
     if isinstance(data, list) and data and isinstance(data[0], dict):
         texto = data[0].get("generated_text", "")
     elif isinstance(data, dict):
@@ -387,6 +365,53 @@ def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: flo
     else:
         texto = ""
     return _limpar_saida_llm(texto)
+
+
+def _hf_request_json(payload: dict) -> dict | list:
+    token = os.getenv("HF_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_API_TOKEN nao configurado")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+
+    modelos = []
+    vistos = set()
+    for model in (HF_SUMMARY_MODEL, *HF_SUMMARY_FALLBACK_MODELS):
+        m = model.strip()
+        if m and m not in vistos:
+            vistos.add(m)
+            modelos.append(m)
+
+    if not modelos:
+        raise RuntimeError("Nenhum modelo configurado para resumo de IA")
+
+    erros = []
+    for model in modelos:
+        model_path = quote(model, safe="")
+        urls = [
+            f"https://router.huggingface.co/hf-inference/models/{model_path}",
+            f"https://api-inference.huggingface.co/models/{model_path}",
+        ]
+        for url in urls:
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
+            except requests.RequestException as exc:
+                erros.append(f"{model} @ {url}: erro de rede ({exc})")
+                continue
+
+            if resp.status_code >= 400:
+                erros.append(f"{model} @ {url}: HTTP {resp.status_code} ({resp.text[:120]})")
+                continue
+
+            try:
+                return resp.json()
+            except ValueError:
+                erros.append(f"{model} @ {url}: resposta nao eh JSON valido")
+
+    raise RuntimeError("HF API indisponivel apos tentativas: " + " | ".join(erros[:4]))
 
 
 def _limpar_meta_texto(texto: str) -> str:

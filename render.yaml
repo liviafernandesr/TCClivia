@@ -10,6 +10,8 @@ services:
         value: 3.12.3
       - key: HF_SUMMARY_MODEL
         value: google/flan-t5-small
+      - key: HF_SUMMARY_FALLBACK_MODELS
+        value: google/flan-t5-small,facebook/bart-large-cnn
       - key: HF_INFERENCE_TIMEOUT
         value: "45"
       - key: ALLOW_LOCAL_LLM_FALLBACK

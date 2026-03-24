@@ -101,28 +101,40 @@ def formatar_data_e_pais_amazon(data_str):
 
 # DEF REINICIAR DRIVER
 def verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios):
-    if produto_atual % REINICIAR_A_CADA == 0:
-        print(f"   🔄 [{contador_reinicios+1}] Reiniciando driver de forma segura...")
-        try:
-            driver.quit()
-        except:
-            pass
-        
-        # GARANTIA: Espera o Windows liberar os recursos e as portas (fundamental para o UC)
-        time.sleep(15) 
-        
-        options = uc.ChromeOptions()
-        options.add_argument("--window-size=1920,1080")
-        
-        # Tenta criar o novo driver com tratamento de erro
-        try:
-            novo_driver = uc.Chrome(
-            version_main=144,   #CORREÇÃO
-            options=options
-        )
+    precisa_reiniciar = (produto_atual % REINICIAR_A_CADA == 0)
 
-            
-            stealth(novo_driver,
+    if not precisa_reiniciar:
+        if driver is None:
+            precisa_reiniciar = True
+        else:
+            try:
+                _ = driver.current_url
+            except Exception:
+                precisa_reiniciar = True
+
+    if not precisa_reiniciar:
+        return driver, contador_reinicios
+
+    print(f"   🔄 [{contador_reinicios+1}] Reiniciando driver de forma segura...")
+    try:
+        if driver is not None:
+            driver.quit()
+    except Exception:
+        pass
+
+    # Espera o Windows liberar recursos e portas antes de abrir nova sessão.
+    time.sleep(8)
+
+    options = uc.ChromeOptions()
+    options.add_argument("--window-size=1920,1080")
+
+    ultimo_erro = None
+    for tentativa in range(1, MAX_TENTATIVAS + 1):
+        try:
+            novo_driver = uc.Chrome(options=options)
+
+            stealth(
+                novo_driver,
                 languages=["pt-BR", "pt"],
                 vendor="Google Inc.",
                 platform="Win32",
@@ -130,18 +142,24 @@ def verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios):
                 renderer="Intel Iris OpenGL Engine",
                 fix_hairline=True,
             )
-            
+
             novo_driver.get("https://www.amazon.com.br")
             carregar_cookies(novo_driver)
-            time.sleep(5)
-            
+            time.sleep(3)
+            novo_driver.refresh()
+            time.sleep(2)
+
             return novo_driver, contador_reinicios + 1
         except Exception as e:
-            print(f"   ⚠️ Falha ao recriar driver: {e}. Tentando novamente em 10s...")
+            ultimo_erro = e
+            print(
+                f"   ⚠️ Falha ao recriar driver (tentativa {tentativa}/{MAX_TENTATIVAS}): {e}"
+            )
             time.sleep(10)
-            return verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios)
 
-    return driver, contador_reinicios
+    raise RuntimeError(
+        f"Não foi possível recriar o driver após {MAX_TENTATIVAS} tentativas. Último erro: {ultimo_erro}"
+    )
 
 def filtrar_comentario_brasileiro(data_str):
     """
@@ -943,6 +961,8 @@ def main():
         print("❌ Cookies não encontrados. Rode 'login_amazon.py' primeiro.")
         return
 
+    driver = None
+
     try:
         print("🔄 Iniciando navegador indetectável...")
         # Cria o primeiro driver usando a lógica do UC
@@ -951,7 +971,6 @@ def main():
         # options.add_argument("--headless")
 
         driver = uc.Chrome(
-        version_main=144,   # FIXAÇÃO CORRETA
         options=options
     )
         
@@ -1137,8 +1156,14 @@ def main():
     except Exception as e:
         print(f"\n❌ Erro durante a execução: {str(e)}")
     finally:
-        driver.quit()
-        print("\n🛑 Navegador fechado")
+        if driver is not None:
+            try:
+                driver.quit()
+                print("\n🛑 Navegador fechado")
+            except Exception as e:
+                print(f"\n⚠️ Falha ao fechar navegador: {str(e)}")
+        else:
+            print("\n🛑 Navegador não foi inicializado")
 
 if __name__ == "__main__":
     main() 
