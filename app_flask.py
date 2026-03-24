@@ -337,14 +337,7 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     }
 
     data = _hf_request_json(payload)
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        texto = data[0].get("generated_text", "")
-    elif isinstance(data, dict):
-        texto = data.get("generated_text", "")
-    else:
-        texto = ""
-
-    return _limpar_saida_llm(texto)
+    return _extrair_texto_hf(data)
 
 
 def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: float = 0.2) -> str:
@@ -356,12 +349,36 @@ def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: flo
         },
     }
     data = _hf_request_json(payload)
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        texto = data[0].get("generated_text", "")
+    return _extrair_texto_hf(data)
+
+
+def _extrair_texto_hf(data) -> str:
+    """Normaliza diferentes formatos de resposta da HF Inference API."""
+    texto = ""
+
+    if isinstance(data, list) and data:
+        primeiro = data[0]
+        if isinstance(primeiro, dict):
+            texto = (
+                primeiro.get("generated_text")
+                or primeiro.get("summary_text")
+                or primeiro.get("text")
+                or ""
+            )
+        elif isinstance(primeiro, str):
+            texto = primeiro
     elif isinstance(data, dict):
-        texto = data.get("generated_text", "")
-    else:
-        texto = ""
+        texto = (
+            data.get("generated_text")
+            or data.get("summary_text")
+            or data.get("text")
+            or ""
+        )
+        if not texto and isinstance(data.get("choices"), list) and data["choices"]:
+            c0 = data["choices"][0]
+            if isinstance(c0, dict):
+                texto = c0.get("text") or c0.get("message", {}).get("content", "")
+
     return _limpar_saida_llm(texto)
 
 
