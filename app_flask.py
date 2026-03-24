@@ -210,6 +210,11 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
     sinais_instrucao = [
         "escreva 1 paragrafo",
         "foco em percepcao geral",
+        "foque apenas no produto",
+        "nao use frases como",
+        "nao use tom tecnico",
+        "entregue 1 paragrafo",
+        "voce vai escrever um resumo",
         "resuma as opinioes",
         "resuma as opinioes de consumidores",
         "dados estruturados",
@@ -243,6 +248,42 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
     return True
 
 
+def _remover_frases_instrucao(texto: str) -> str:
+    """Filtra frases que sao instrucoes do prompt, nao resumo do produto."""
+    s = norm_str(texto)
+    if not s:
+        return s
+
+    partes = re.split(r"(?<=[\.!?])\s+", s)
+    inicio_bloqueado = (
+        "escreva",
+        "foque",
+        "resuma",
+        "nao use",
+        "entregue",
+        "voce vai",
+    )
+    contem_bloqueado = (
+        "dados estruturados",
+        "comentarios:",
+        "foco em percepcao geral",
+    )
+
+    limpas = []
+    for p in partes:
+        frase = norm_str(p)
+        if not frase:
+            continue
+        f_norm = _normalizar_texto(frase)
+        if any(f_norm.startswith(i) for i in inicio_bloqueado):
+            continue
+        if any(c in f_norm for c in contem_bloqueado):
+            continue
+        limpas.append(frase)
+
+    return " ".join(limpas).strip()
+
+
 def _limpar_saida_llm(texto: str) -> str:
     s = norm_str(texto)
     if not s:
@@ -251,6 +292,7 @@ def _limpar_saida_llm(texto: str) -> str:
     s = re.split(r"\n\s*\n", s)[0]
     s = re.split(r"\n\s*\d+\.", s)[0]
     s = re.split(r"aqui estao", s, flags=re.IGNORECASE)[0]
+    s = _remover_frases_instrucao(s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
