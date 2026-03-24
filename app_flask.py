@@ -506,6 +506,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             via_api = _resumo_via_hf_inference_api(textos, analise)
             if via_api:
                 return via_api
+            if not ALLOW_LOCAL_LLM_FALLBACK:
+                raise RuntimeError("Resumo IA remoto retornou vazio")
         except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 raise RuntimeError(f"Resumo IA remoto indisponivel: {exc}")
@@ -549,6 +551,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
             if out:
                 return out
+            if not ALLOW_LOCAL_LLM_FALLBACK:
+                raise RuntimeError("Reescrita IA remota retornou vazio")
         except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 raise RuntimeError(f"Reescrita IA remota indisponivel: {exc}")
