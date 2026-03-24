@@ -207,6 +207,16 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
     t = _normalizar_texto(texto)
     if len(t) < 50:
         return False
+    sinais_instrucao = [
+        "escreva 1 paragrafo",
+        "foco em percepcao geral",
+        "resuma as opinioes",
+        "resuma as opinioes de consumidores",
+        "dados estruturados",
+        "comentarios:",
+    ]
+    if any(s in t for s in sinais_instrucao):
+        return False
     sinais_ruins = [
         "plataforma de e-commerce",
         "site de e-commerce",
@@ -595,10 +605,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
         if not _resumo_ia_aceitavel(resumo_amz):
-            if ALLOW_LOCAL_LLM_FALLBACK:
-                resumo_amz = _resumo_natural_por_fatos(analise_amz)
-            else:
-                raise RuntimeError("IA remota retornou texto de baixa qualidade para Amazon")
+            resumo_amz = _resumo_natural_por_fatos(analise_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
 
     resumo_ml = "Sem comentarios suficientes no Mercado Livre."
@@ -611,10 +618,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)
         if not _resumo_ia_aceitavel(resumo_ml):
-            if ALLOW_LOCAL_LLM_FALLBACK:
-                resumo_ml = _resumo_natural_por_fatos(analise_ml)
-            else:
-                raise RuntimeError("IA remota retornou texto de baixa qualidade para Mercado Livre")
+            resumo_ml = _resumo_natural_por_fatos(analise_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)
 
     return {
