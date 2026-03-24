@@ -576,10 +576,10 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             if via_api:
                 return via_api
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                raise RuntimeError("Resumo IA remoto retornou vazio")
+                return ""
         except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                raise RuntimeError(f"Resumo IA remoto indisponivel: {exc}")
+                return ""
 
         # 2) Fallback local (dev/local)
         if llm is None or prompt is None:
@@ -621,10 +621,10 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             if out:
                 return out
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                raise RuntimeError("Reescrita IA remota retornou vazio")
+                return ""
         except Exception as exc:
             if not ALLOW_LOCAL_LLM_FALLBACK:
-                raise RuntimeError(f"Reescrita IA remota indisponivel: {exc}")
+                return ""
 
         if llm is None or prompt is None:
             llm, prompt = _get_modelo_ia_resumo()
@@ -689,11 +689,19 @@ def gerar_resumo_comentarios(comentarios: dict) -> dict:
         out["erro"] = ""
         return out
     except Exception as exc:
+        analise_amz = _analisar_comentarios_plataforma(
+            [{"texto": _limpar_meta_texto(t), "nota": "", "data": ""} for t in textos_amz],
+            "Amazon",
+        )
+        analise_ml = _analisar_comentarios_plataforma(
+            [{"texto": _limpar_meta_texto(t), "nota": "", "data": ""} for t in textos_ml],
+            "Mercado Livre",
+        )
         return {
-            "amazon": "Resumo de IA indisponivel no momento para Amazon.",
-            "ml": "Resumo de IA indisponivel no momento para Mercado Livre.",
-            "modo": "ia_indisponivel",
-            "erro": str(exc),
+            "amazon": _resumo_natural_por_fatos(analise_amz) if textos_amz else "Sem comentarios da Amazon para resumir.",
+            "ml": _resumo_natural_por_fatos(analise_ml) if textos_ml else "Sem comentarios do Mercado Livre para resumir.",
+            "modo": "fallback_fatos",
+            "erro": "",
         }
 
 
