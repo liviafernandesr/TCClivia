@@ -248,6 +248,31 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
     return True
 
 
+def _resumo_parece_copia_comentario(resumo: str, comentarios: tuple[str, ...]) -> bool:
+    """Sinaliza resumo muito extrativo (copia frases dos comentarios)."""
+    r = _normalizar_texto(resumo)
+    if not r:
+        return True
+
+    frases = [
+        _normalizar_texto(f)
+        for f in re.split(r"(?<=[\.!?])\s+", resumo)
+        if _normalizar_texto(f)
+    ]
+    comentarios_norm = [
+        _normalizar_texto(_limpar_meta_texto(c)) for c in comentarios[:12] if _normalizar_texto(_limpar_meta_texto(c))
+    ]
+
+    for frase in frases:
+        if len(frase) < 40:
+            continue
+        for c in comentarios_norm:
+            # Evita exibir resumo que replica trecho inteiro de comentario.
+            if frase in c:
+                return True
+    return False
+
+
 def _remover_frases_instrucao(texto: str) -> str:
     """Filtra frases que sao instrucoes do prompt, nao resumo do produto."""
     s = norm_str(texto)
@@ -325,26 +350,25 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     tom = analise.get("tom", {})
     pos = tom.get("positivo", 0)
     neg = tom.get("negativo", 0)
-    neut = tom.get("neutro", 0)
     temas_pos = analise.get("temas_pos", [])
     temas_neg = analise.get("temas_neg", [])
 
     if pos > neg:
-        abertura = "Os comentarios mostram percepcao geralmente positiva sobre o produto."
+        abertura = "A percepcao geral sobre o produto tende a ser positiva."
     elif neg > pos:
-        abertura = "Os comentarios mostram percepcao mais critica sobre o produto."
+        abertura = "A percepcao geral sobre o produto e mais critica."
     else:
-        abertura = "Os comentarios mostram percepcao equilibrada sobre o produto."
+        abertura = "A percepcao geral sobre o produto aparece equilibrada."
 
     meio = ""
     if temas_pos:
-        meio = f"Os elogios mais frequentes destacam {', '.join(temas_pos)}."
+        meio = f"Entre os pontos mais elogiados, aparecem {', '.join(temas_pos)}."
     fim = ""
     if temas_neg:
-        fim = f"Como ponto de atencao, aparecem relatos ligados a {', '.join(temas_neg)}."
+        fim = f"Como atencao recorrente, surgem observacoes sobre {', '.join(temas_neg)}."
 
-    extra = f"No conjunto, ha {pos} relatos positivos, {neut} neutros e {neg} negativos."
-    return " ".join(p for p in [abertura, meio, fim, extra] if p)
+    fechamento = "No geral, a experiencia relatada combina boa aceitacao com ajustes pontuais de expectativa."
+    return " ".join(p for p in [abertura, meio, fim, fechamento] if p)
 
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
@@ -352,31 +376,21 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     if not comentarios:
         return ""
 
-    linhas = []
-    total = 0
-    for c in comentarios[:8]:
-        t = _limpar_meta_texto(c)
-        if not t:
-            continue
-        t = t[:220]
-        pedaco = f"- {t}\n"
-        if total + len(pedaco) > 2200:
-            break
-        linhas.append(pedaco)
-        total += len(pedaco)
-
     fatos = []
+    fatos.append(f"percepcao geral: {analise.get('resumo', '')}")
     if analise.get("temas_pos"):
         fatos.append(f"elogios recorrentes: {', '.join(analise['temas_pos'])}")
     if analise.get("temas_neg"):
         fatos.append(f"pontos de atencao: {', '.join(analise['temas_neg'])}")
+    if analise.get("media_nota") is not None:
+        fatos.append(f"nota media aproximada: {analise['media_nota']}")
 
     prompt = (
-        "Resuma as opinioes de consumidores sobre um produto em portugues do Brasil. "
-        "Escreva 1 paragrafo natural com 3-5 frases, sem listas, sem repetir frases e sem descrever marketplace. "
-        "Foque em percepcao geral, elogios mais comuns e eventuais pontos de atencao.\n\n"
-        f"Dados estruturados: {'; '.join(fatos) if fatos else 'sem dados estruturados extras'}\n"
-        f"Comentarios:\n{''.join(linhas)}\n"
+        "Escreva um resumo executivo em portugues do Brasil sobre a opiniao dos consumidores de um produto. "
+        "Use 1 paragrafo com 3 a 4 frases, tom profissional e linguagem clara. "
+        "Nao mencione plataforma, nao reproduza frases literais de comentarios e nao inclua contagens de positivos, neutros ou negativos. "
+        "Destaque percepcao geral, pontos fortes recorrentes e pontos de atencao.\n\n"
+        f"Fatos consolidados: {'; '.join(fatos) if fatos else 'sem fatos consolidados'}\n\n"
         "Resumo:"
     )
 
@@ -611,8 +625,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         prompt_fatos = (
             "Voce vai escrever um resumo curto de IA em portugues do Brasil, estilo 'Opinioes em destaque'.\n"
             "Foque apenas no produto e no que os consumidores relatam, sem explicar loja/plataforma.\n"
-            "Nao use frases como 'foram analisados' e nao use tom tecnico.\n"
-            "Entregue 1 paragrafo natural (3 a 5 frases).\n\n"
+            "Nao use frases literais de comentarios e nao inclua contagens de positivos, neutros ou negativos.\n"
+            "Entregue 1 paragrafo profissional (3 a 4 frases), objetivo e natural.\n\n"
             f"Fatos extraidos: {'; '.join(fatos)}\n\n"
             "Resumo:"
         )
@@ -642,10 +656,14 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         resumo_amz = _ask(textos_amz, analise_amz)
         resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
         resumo_amz = _deduplicar_frases(resumo_amz)
+        if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
+            resumo_amz = ""
         if not _resumo_ia_aceitavel(resumo_amz):
             resumo_amz = _ask_rewrite_from_facts(analise_amz)
             resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
+        if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
+            resumo_amz = ""
         if not _resumo_ia_aceitavel(resumo_amz):
             resumo_amz = _resumo_natural_por_fatos(analise_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
@@ -655,10 +673,14 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         resumo_ml = _ask(textos_ml, analise_ml)
         resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
         resumo_ml = _deduplicar_frases(resumo_ml)
+        if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
+            resumo_ml = ""
         if not _resumo_ia_aceitavel(resumo_ml):
             resumo_ml = _ask_rewrite_from_facts(analise_ml)
             resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)
+        if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
+            resumo_ml = ""
         if not _resumo_ia_aceitavel(resumo_ml):
             resumo_ml = _resumo_natural_por_fatos(analise_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)

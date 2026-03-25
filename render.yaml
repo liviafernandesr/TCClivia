@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: projeto-tcc-livia
+    name: altiteb
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
