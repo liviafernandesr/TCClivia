@@ -427,6 +427,15 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     if not comentarios:
         return ""
 
+    base_comentarios = []
+    for c in comentarios[:10]:
+        t = _limpar_meta_texto(c)
+        if t:
+            base_comentarios.append(t[:220])
+
+    if not base_comentarios:
+        return ""
+
     fatos = []
     tom = analise.get("tom", {})
     pos = tom.get("positivo", 0)
@@ -446,13 +455,14 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     if analise.get("media_nota") is not None:
         fatos.append(f"nota média aproximada: {analise['media_nota']}")
 
+    contexto = " ".join(base_comentarios)
     prompt = (
-        "Produza APENAS o resumo final em português do Brasil, no estilo de marketplace. "
-        "Use um único parágrafo curto, com 1 a 2 frases objetivas e linguagem profissional. "
-        "Não copie frases literais dos comentários e não mencione a plataforma. "
-        "Não inclua contagens de positivos, neutros ou negativos.\n\n"
-        f"Fatos consolidados: {'; '.join(fatos) if fatos else 'sem fatos consolidados'}\n\n"
-        "Resumo:"
+        "Resumo de avaliações de produto em português do Brasil. "
+        "Escreva um parágrafo curto, natural e profissional, sem mencionar a plataforma. "
+        "Não inclua instruções no texto final.\n\n"
+        f"Fatos: {'; '.join(fatos) if fatos else 'sem fatos adicionais'}.\n"
+        f"Comentários: {contexto}\n\n"
+        "Saída final:"
     )
 
     payload = {
@@ -686,12 +696,11 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             fatos.append(f"nota média aproximada: {analise['media_nota']}")
 
         prompt_fatos = (
-            "Produza APENAS o resumo final em português do Brasil, estilo marketplace.\n"
-            "Use um único parágrafo curto, com 1 a 2 frases objetivas e linguagem profissional.\n"
-            "Não copie frases literais dos comentários e não mencione a plataforma.\n"
-            "Não inclua contagens de positivos, neutros ou negativos.\n\n"
+            "Resumo de avaliações de produto em português do Brasil.\n"
+            "Escreva um parágrafo curto, natural e profissional, sem mencionar a plataforma.\n"
+            "Não inclua instruções no texto final e não use listas.\n\n"
             f"Fatos extraídos: {'; '.join(fatos)}\n\n"
-            "Resumo:"
+            "Saída final:"
         )
         try:
             out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
@@ -728,8 +737,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
             resumo_amz = ""
         if not _resumo_ia_aceitavel(resumo_amz):
-            resumo_amz = _resumo_natural_por_fatos(analise_amz)
-            resumo_amz = _deduplicar_frases(resumo_amz)
+            raise RuntimeError("Resumo de IA inválido para Amazon")
 
     resumo_ml = "Sem comentários suficientes no Mercado Livre."
     if textos_ml:
@@ -745,8 +753,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
             resumo_ml = ""
         if not _resumo_ia_aceitavel(resumo_ml):
-            resumo_ml = _resumo_natural_por_fatos(analise_ml)
-            resumo_ml = _deduplicar_frases(resumo_ml)
+            raise RuntimeError("Resumo de IA inválido para Mercado Livre")
 
     return {
         "amazon": resumo_amz,
@@ -774,19 +781,11 @@ def gerar_resumo_comentarios(comentarios: dict) -> dict:
         out["erro"] = ""
         return out
     except Exception as exc:
-        analise_amz = _analisar_comentarios_plataforma(
-            [{"texto": _limpar_meta_texto(t), "nota": "", "data": ""} for t in textos_amz],
-            "Amazon",
-        )
-        analise_ml = _analisar_comentarios_plataforma(
-            [{"texto": _limpar_meta_texto(t), "nota": "", "data": ""} for t in textos_ml],
-            "Mercado Livre",
-        )
         return {
-            "amazon": _resumo_natural_por_fatos(analise_amz) if textos_amz else "Sem comentários da Amazon para resumir.",
-            "ml": _resumo_natural_por_fatos(analise_ml) if textos_ml else "Sem comentários do Mercado Livre para resumir.",
-            "modo": "fallback_fatos",
-            "erro": "",
+            "amazon": "Resumo de IA indisponível no momento para Amazon.",
+            "ml": "Resumo de IA indisponível no momento para Mercado Livre.",
+            "modo": "ia_indisponivel",
+            "erro": str(exc),
         }
 
 

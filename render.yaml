@@ -9,9 +9,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.3
       - key: HF_SUMMARY_MODEL
-        value: facebook/bart-large-cnn
+        value: csebuetnlp/mT5_multilingual_XLSum
       - key: HF_SUMMARY_FALLBACK_MODELS
-        value: facebook/bart-large-cnn,google/flan-t5-small
+        value: csebuetnlp/mT5_multilingual_XLSum,facebook/bart-large-cnn
       - key: HF_INFERENCE_TIMEOUT
         value: "45"
       - key: ALLOW_LOCAL_LLM_FALLBACK
