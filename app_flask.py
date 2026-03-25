@@ -208,9 +208,13 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
     if len(t) < 50:
         return False
     sinais_instrucao = [
+        "use 1 paragrafo",
         "escreva 1 paragrafo",
         "foco em percepcao geral",
         "foque apenas no produto",
+        "nao mencione plataforma",
+        "nao reproduza frases literais",
+        "destaque percepcao geral",
         "nao use frases como",
         "nao use tom tecnico",
         "entregue 1 paragrafo",
@@ -281,15 +285,21 @@ def _remover_frases_instrucao(texto: str) -> str:
 
     partes = re.split(r"(?<=[\.!?])\s+", s)
     inicio_bloqueado = (
+        "use",
         "escreva",
         "foque",
+        "destaque",
         "resuma",
+        "nao mencione",
+        "nao reproduza",
         "nao use",
         "entregue",
         "voce vai",
     )
     contem_bloqueado = (
         "dados estruturados",
+        "fatos consolidados",
+        "fatos extraidos",
         "comentarios:",
         "foco em percepcao geral",
     )
@@ -317,6 +327,8 @@ def _limpar_saida_llm(texto: str) -> str:
     s = re.split(r"\n\s*\n", s)[0]
     s = re.split(r"\n\s*\d+\.", s)[0]
     s = re.split(r"aqui estao", s, flags=re.IGNORECASE)[0]
+    if "Resumo:" in s:
+        s = s.split("Resumo:")[-1].strip()
     s = _remover_frases_instrucao(s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
