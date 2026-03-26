@@ -588,21 +588,20 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     return texto
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
-    """Gera resumo via HF Inference API usando os comentários reais como contexto."""
     if not comentarios:
         return ""
 
     trechos = []
     total_chars = 0
-    max_chars = 2200
+    max_chars = 1800
 
-    for c in comentarios[:10]:
+    for c in comentarios[:8]:
         limpo = _limpar_meta_texto(c)
         if not limpo:
             continue
         limpo = re.sub(r"\s+", " ", limpo).strip()
-        if len(limpo) > 260:
-            limpo = limpo[:260].rstrip() + "..."
+        if len(limpo) > 220:
+            limpo = limpo[:220].rstrip() + "..."
         bloco = f"- {limpo}"
         if total_chars + len(bloco) > max_chars:
             break
@@ -615,23 +614,19 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     contexto = "\n".join(trechos)
 
     prompt = (
-        "Você é um assistente que resume opiniões de consumidores sobre produtos.\n"
-        "Com base apenas nos comentários abaixo, escreva um único parágrafo curto em português do Brasil,\n"
-        "no estilo 'opiniões em destaque'.\n"
-        "O texto deve soar natural, fluido e humano, como um pequeno resumo editorial.\n"
-        "Não use listas. Não mencione plataforma, marketplace, nota média, quantidade de comentários ou percentuais.\n"
-        "Não invente fatos. Não copie frases literalmente. Não use tom técnico.\n"
-        "Destaque a percepção geral dos consumidores, os elogios mais recorrentes e, se existirem,\n"
-        "as principais ressalvas de forma sutil e natural.\n\n"
-        f"Comentários:\n{contexto}\n\n"
-        "Resumo:"
+        "Resuma as opiniões abaixo sobre um produto em um único parágrafo curto, natural e fluido, "
+        "em português do Brasil. O texto deve soar como um resumo editorial de experiência de consumidores. "
+        "Destaque a percepção geral, os elogios mais recorrentes e eventuais ressalvas de forma sutil. "
+        "Não mencione plataforma, quantidade de comentários, nota média ou percentuais. "
+        "Não use listas. Não invente fatos.\n\n"
+        f"{contexto}\n\nResumo:"
     )
 
     data = _hf_request_json({
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 140,
-            "temperature": 0.55,
+            "max_new_tokens": 120,
+            "temperature": 0.7,
             "return_full_text": False,
         },
     })
@@ -849,34 +844,21 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         return "".join(itens)
 
     def _ask(textos: tuple[str, ...], analise: dict) -> str:
-        nonlocal llm, prompt
-        # 1) Tenta API remota (mais adequada para deploy no Render)
+        # 1) Tenta API remota
         try:
             via_api = _resumo_via_hf_inference_api(textos, analise)
-            if via_api:
+            via_api = re.sub(r"\[[^\]]*\]", "", norm_str(via_api)).strip()
+            via_api = _limpar_saida_llm(via_api)
+
+            print("[HF RAW]", via_api[:300])
+
+            if via_api and len(via_api) >= 80:
                 return via_api
-            if not ALLOW_LOCAL_LLM_FALLBACK:
-                return ""
+
+            return ""
         except Exception as exc:
             print(f"[ERRO HF AMAZON/ML] {exc}")
-            if not ALLOW_LOCAL_LLM_FALLBACK:
-                return ""
-
-        # 2) Fallback local (dev/local)
-        if llm is None or prompt is None:
-            llm, prompt = _get_modelo_ia_resumo()
-        contexto = _contexto_resumo(textos, analise)
-        if not contexto:
             return ""
-        final_prompt = prompt.format(contexto=contexto)
-        result = llm.invoke(final_prompt)
-        raw = result if isinstance(result, str) else str(result)
-        texto = raw.strip()
-        if texto.startswith(final_prompt):
-            texto = texto[len(final_prompt):].strip()
-        if "Resumo:" in texto:
-            texto = texto.split("Resumo:")[-1].strip()
-        return _limpar_saida_llm(texto)
 
     def _ask_rewrite_from_facts(analise: dict, textos_origem: tuple[str, ...]) -> str:
         nonlocal llm, prompt
@@ -926,34 +908,18 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         resumo_amz = _ask(textos_amz, analise_amz)
         resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
         resumo_amz = _deduplicar_frases(resumo_amz)
-        if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
-            resumo_amz = ""
-        if not _resumo_ia_aceitavel(resumo_amz):
-            resumo_amz = _ask_rewrite_from_facts(analise_amz, textos_amz)
-            resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
-            resumo_amz = _deduplicar_frases(resumo_amz)
-        if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
-            resumo_amz = ""
-        if not _resumo_ia_aceitavel(resumo_amz):
-            resumo_amz = _resumo_natural_por_fatos(analise_amz)
-            resumo_amz = _deduplicar_frases(resumo_amz)
+
+        if not resumo_amz or len(resumo_amz) < 80:
+            resumo_amz = "Resumo de IA indisponível no momento para Amazon."
 
     resumo_ml = "Sem comentários suficientes no Mercado Livre."
     if textos_ml:
         resumo_ml = _ask(textos_ml, analise_ml)
         resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
         resumo_ml = _deduplicar_frases(resumo_ml)
-        if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
-            resumo_ml = ""
-        if not _resumo_ia_aceitavel(resumo_ml):
-            resumo_ml = _ask_rewrite_from_facts(analise_ml, textos_ml)
-            resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
-            resumo_ml = _deduplicar_frases(resumo_ml)
-        if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
-            resumo_ml = ""
-        if not _resumo_ia_aceitavel(resumo_ml):
-            resumo_ml = _resumo_natural_por_fatos(analise_ml)
-            resumo_ml = _deduplicar_frases(resumo_ml)
+
+        if not resumo_ml or len(resumo_ml) < 80:
+            resumo_ml = "Resumo de IA indisponível no momento para Mercado Livre."
 
     return {
         "amazon": resumo_amz,
