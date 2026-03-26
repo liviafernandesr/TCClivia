@@ -20,6 +20,9 @@ from utils.loaders import (
 )
 
 app = Flask(__name__)
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
 
 # load once on startup
 DF_COMP = pd.DataFrame()
