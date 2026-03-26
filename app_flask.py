@@ -248,6 +248,10 @@ def _resumo_ia_aceitavel(texto: str) -> bool:
         "alternativas se necessario",
         "mercado livre tem uma tendencia",
         "contribuindo para a reputacao",
+        "bbc brasil",
+        "serviço mundial de saúde",
+        "organizacao mundial da saude",
+        "publicado na ultima",
     ]
     if any(s in t for s in sinais_ruins):
         return False
@@ -288,6 +292,31 @@ def _resumo_parece_copia_comentario(resumo: str, comentarios: tuple[str, ...]) -
             if frase in c:
                 return True
     return False
+
+
+def _tokens_base(texto: str) -> set[str]:
+    stop = {
+        "de", "da", "do", "das", "dos", "a", "o", "as", "os", "e", "em", "na", "no", "nas", "nos",
+        "um", "uma", "uns", "umas", "para", "por", "com", "sem", "que", "se", "ao", "aos", "mais",
+    }
+    toks = re.findall(r"[a-zA-Zà-ÿÀ-Ÿ0-9-]+", _normalizar_texto(texto))
+    return {t for t in toks if len(t) > 2 and t not in stop}
+
+
+def _resumo_aderente_aos_comentarios(resumo: str, comentarios: tuple[str, ...]) -> bool:
+    """Garante que o resumo esteja semanticamente próximo das avaliações fornecidas."""
+    resumo_tokens = _tokens_base(resumo)
+    if len(resumo_tokens) < 6:
+        return False
+
+    origem = " ".join(_limpar_meta_texto(c) for c in comentarios[:20])
+    origem_tokens = _tokens_base(origem)
+    if not origem_tokens:
+        return False
+
+    inter = len(resumo_tokens & origem_tokens)
+    taxa = inter / max(len(resumo_tokens), 1)
+    return taxa >= 0.35
 
 
 def _formatar_lista_natural(itens: list[str]) -> str:
@@ -436,33 +465,13 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     if not base_comentarios:
         return ""
 
-    fatos = []
-    tom = analise.get("tom", {})
-    pos = tom.get("positivo", 0)
-    neg = tom.get("negativo", 0)
-    if pos > neg:
-        fatos.append("tom predominante: positivo")
-    elif neg > pos:
-        fatos.append("tom predominante: crítico")
-    else:
-        fatos.append("tom predominante: equilibrado")
-    if analise.get("temas_pos"):
-        temas_pos = [_tema_para_exibicao(t) for t in analise["temas_pos"]]
-        fatos.append(f"elogios recorrentes: {', '.join(temas_pos)}")
-    if analise.get("temas_neg"):
-        temas_neg = [_tema_para_exibicao(t) for t in analise["temas_neg"]]
-        fatos.append(f"pontos de atenção: {', '.join(temas_neg)}")
-    if analise.get("media_nota") is not None:
-        fatos.append(f"nota média aproximada: {analise['media_nota']}")
-
     contexto = " ".join(base_comentarios)
     prompt = (
-        "Resumo de avaliações de produto em português do Brasil. "
-        "Escreva um parágrafo curto, natural e profissional, sem mencionar a plataforma. "
-        "Não inclua instruções no texto final.\n\n"
-        f"Fatos: {'; '.join(fatos) if fatos else 'sem fatos adicionais'}.\n"
-        f"Comentários: {contexto}\n\n"
-        "Saída final:"
+        "Você é um assistente de resumo de avaliações. "
+        "Escreva APENAS um resumo curto em português do Brasil, com 1 ou 2 frases. "
+        "Use somente informações presentes nas avaliações abaixo, sem inventar fatos e sem mencionar plataforma.\n\n"
+        f"Avaliações: {contexto}\n\n"
+        "Resumo:"
     )
 
     payload = {
@@ -658,7 +667,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         # 1) Tenta API remota (mais adequada para deploy no Render)
         try:
             via_api = _resumo_via_hf_inference_api(textos, analise)
-            if via_api:
+            if via_api and _resumo_aderente_aos_comentarios(via_api, textos):
                 return via_api
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
@@ -682,7 +691,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             texto = texto.split("Resumo:")[-1].strip()
         return _limpar_saida_llm(texto)
 
-    def _ask_rewrite_from_facts(analise: dict) -> str:
+    def _ask_rewrite_from_facts(analise: dict, textos_origem: tuple[str, ...]) -> str:
         nonlocal llm, prompt
         fatos = []
         fatos.append(f"tom: {analise.get('tom', {})}")
@@ -704,7 +713,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         )
         try:
             out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
-            if out:
+            if out and _resumo_aderente_aos_comentarios(out, textos_origem):
                 return out
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
@@ -731,7 +740,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
             resumo_amz = ""
         if not _resumo_ia_aceitavel(resumo_amz):
-            resumo_amz = _ask_rewrite_from_facts(analise_amz)
+            resumo_amz = _ask_rewrite_from_facts(analise_amz, textos_amz)
             resumo_amz = re.sub(r"\[[^\]]*\]", "", resumo_amz)
             resumo_amz = _deduplicar_frases(resumo_amz)
         if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
@@ -747,7 +756,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
             resumo_ml = ""
         if not _resumo_ia_aceitavel(resumo_ml):
-            resumo_ml = _ask_rewrite_from_facts(analise_ml)
+            resumo_ml = _ask_rewrite_from_facts(analise_ml, textos_ml)
             resumo_ml = re.sub(r"\[[^\]]*\]", "", resumo_ml)
             resumo_ml = _deduplicar_frases(resumo_ml)
         if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
