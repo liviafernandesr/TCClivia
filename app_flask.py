@@ -21,11 +21,12 @@ from utils.loaders import (
 app = Flask(__name__)
 
 # load once on startup
-DF_COMP = carregar_comparacao_master_com_precos()
-DF_AMZ = carregar_amazon_sample()
-DF_ML = carregar_ml_sample()
-DF_COMP_LAST_REFRESH = time.time()
+DF_COMP = pd.DataFrame()
+DF_AMZ = None
+DF_ML = None
+DF_COMP_LAST_REFRESH = 0
 
+USE_LLM_POLISH = os.getenv("USE_LLM_POLISH", "0") == "1"
 CACHE_UPDATE_INTERVAL_SECONDS = 20 * 60
 DF_COMP_REFRESH_INTERVAL_SECONDS = int(os.getenv("DF_COMP_REFRESH_INTERVAL_SECONDS", "120"))
 SUMMARY_PIPELINE_VERSION = "v3"
@@ -431,26 +432,36 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     tom = analise.get("tom", {})
     pos = tom.get("positivo", 0)
     neg = tom.get("negativo", 0)
+    neut = tom.get("neutro", 0)
+    qtd = analise.get("qtd", 0)
+    media = analise.get("media_nota")
+
     temas_pos = [_tema_para_exibicao(t) for t in analise.get("temas_pos", [])[:2]]
-    temas_neg = [_tema_para_exibicao(t) for t in analise.get("temas_neg", [])[:2]]
+    temas_neg = [_tema_para_exibicao(t) for t in analise.get("temas_neg", [])[:1]]
+
+    if qtd == 0:
+        return "Ainda não há comentários suficientes para gerar um resumo confiável."
 
     if pos > neg:
-        abertura = "O produto foi bem avaliado pela maioria dos consumidores."
+        abertura = "O produto é bem avaliado pela maior parte dos consumidores."
     elif neg > pos:
-        abertura = "As avaliações mostram uma percepção mais crítica sobre o produto."
+        abertura = "As opiniões mostram uma percepção mais dividida sobre o produto."
     else:
-        abertura = "As avaliações mostram percepção equilibrada sobre o produto."
+        abertura = "As opiniões mostram uma percepção equilibrada sobre o produto."
 
-    elogios = ""
+    detalhes = []
     if temas_pos:
-        elogios = f"Os comentários destacam principalmente {_formatar_lista_natural(temas_pos)}."
+        detalhes.append(f"Os comentários destacam principalmente {_formatar_lista_natural(temas_pos)}.")
+    if media is not None:
+        detalhes.append(f"A avaliação média observada ficou em {str(media).replace('.', ',')}/5.")
 
-    ressalvas = ""
+    ressalva = ""
     if temas_neg:
-        ressalvas = f"Como ponto de atenção, aparecem menções a {_formatar_lista_natural(temas_neg)}."
+        ressalva = f"Entre os pontos de atenção, aparecem menções a {_formatar_lista_natural(temas_neg)}."
 
-    fechamento = "No geral, a experiência de uso é vista como positiva, com ajustes pontuais de expectativa."
-    return " ".join(p for p in [abertura, elogios, ressalvas, fechamento] if p)
+    fechamento = "No geral, o produto é percebido como uma opção de bom custo-benefício dentro da proposta que oferece."
+
+    return " ".join([abertura] + detalhes + ([ressalva] if ressalva else []) + [fechamento])
 
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
@@ -612,11 +623,10 @@ def _atualizar_cache_comentarios_se_necessario() -> None:
 
 
 def _obter_df_comp_atualizado() -> pd.DataFrame:
-    """Recarrega o MASTER periodicamente para refletir mudanças sem restart."""
     global DF_COMP, DF_COMP_LAST_REFRESH
     try:
         agora = time.time()
-        if (agora - DF_COMP_LAST_REFRESH) >= DF_COMP_REFRESH_INTERVAL_SECONDS:
+        if DF_COMP.empty or (agora - DF_COMP_LAST_REFRESH) >= DF_COMP_REFRESH_INTERVAL_SECONDS:
             novo_df = carregar_comparacao_master_com_precos()
             if not novo_df.empty:
                 DF_COMP = novo_df
@@ -624,6 +634,23 @@ def _obter_df_comp_atualizado() -> pd.DataFrame:
     except Exception:
         pass
     return DF_COMP
+
+def _obter_df_amz():
+    global DF_AMZ
+    if DF_AMZ is None:
+        DF_AMZ = carregar_amazon_sample()
+        if not DF_AMZ.empty and "ASIN" in DF_AMZ.columns:
+            DF_AMZ["ASIN"] = DF_AMZ["ASIN"].apply(norm_asin)
+    return DF_AMZ if DF_AMZ is not None else pd.DataFrame()
+
+
+def _obter_df_ml():
+    global DF_ML
+    if DF_ML is None:
+        DF_ML = carregar_ml_sample()
+        if not DF_ML.empty and "ASIN" in DF_ML.columns:
+            DF_ML["ASIN"] = DF_ML["ASIN"].apply(norm_asin)
+    return DF_ML if DF_ML is not None else pd.DataFrame()
 
 
 @lru_cache(maxsize=1)
@@ -707,6 +734,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
         except Exception as exc:
+            print(f"[ERRO HF AMAZON/ML] {exc}")
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
 
@@ -754,6 +782,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
         except Exception as exc:
+            print(f"[ERRO HF AMAZON/ML] {exc}")
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
 
@@ -810,11 +839,10 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
 
 
 def gerar_resumo_comentarios(comentarios: dict) -> dict:
-    """Orquestra resumo de comentários com RAG (LangChain/HF), sem fallback genérico."""
-    textos_amz = tuple(_extrair_textos_comentarios(comentarios.get("amazon", [])))
-    textos_ml = tuple(_extrair_textos_comentarios(comentarios.get("ml", [])))
+    comentarios_amz = comentarios.get("amazon", []) or []
+    comentarios_ml = comentarios.get("ml", []) or []
 
-    if not textos_amz and not textos_ml:
+    if not comentarios_amz and not comentarios_ml:
         return {
             "amazon": "Sem comentários da Amazon para resumir.",
             "ml": "Sem comentários do Mercado Livre para resumir.",
@@ -822,18 +850,27 @@ def gerar_resumo_comentarios(comentarios: dict) -> dict:
             "erro": "",
         }
 
-    assinatura = str(hash((SUMMARY_PIPELINE_VERSION, textos_amz, textos_ml)))
-    try:
-        out = _gerar_resumo_rag_cached(assinatura, textos_amz, textos_ml)
-        out["erro"] = ""
-        return out
-    except Exception as exc:
-        return {
-            "amazon": "Resumo de IA indisponível no momento para Amazon.",
-            "ml": "Resumo de IA indisponível no momento para Mercado Livre.",
-            "modo": "ia_indisponivel",
-            "erro": str(exc),
-        }
+    analise_amz = _analisar_comentarios_plataforma(comentarios_amz, "Amazon")
+    analise_ml = _analisar_comentarios_plataforma(comentarios_ml, "Mercado Livre")
+
+    resumo_amz = (
+        _resumo_natural_por_fatos(analise_amz)
+        if comentarios_amz else
+        "Sem comentários suficientes na Amazon."
+    )
+
+    resumo_ml = (
+        _resumo_natural_por_fatos(analise_ml)
+        if comentarios_ml else
+        "Sem comentários suficientes no Mercado Livre."
+    )
+
+    return {
+        "amazon": resumo_amz,
+        "ml": resumo_ml,
+        "modo": "analise_local",
+        "erro": "",
+    }
 
 
 # helper to determine which platform currently offers the best price
@@ -875,80 +912,53 @@ def to_stars(value):
         i = 5
     return i
 
-# lookup prices from samples (fallback)
-DF_AMZ["ASIN"] = DF_AMZ["ASIN"].apply(norm_asin)
-DF_ML["ASIN"] = DF_ML["ASIN"].apply(norm_asin)
-
-AMZ_PRICE = (
-    DF_AMZ.dropna(subset=["ASIN"])
-          .drop_duplicates(subset=["ASIN"], keep="last")
-          .set_index("ASIN")["Preço"]
-          .astype(str)
-          .to_dict()
-)
-
-ML_PRICE = (
-    DF_ML.dropna(subset=["ASIN"])
-         .drop_duplicates(subset=["ASIN"], keep="last")
-         .set_index("ASIN")["Preço à vista"]
-         .astype(str)
-         .to_dict()
-)
-
-ML_PRICE_LINK = {}
-if "Link" in DF_ML.columns:
-    tmp = DF_ML.assign(Link=DF_ML["Link"].astype(str).str.strip())
-    ML_PRICE_LINK = (
-        tmp[tmp["Link"] != ""]
-           .drop_duplicates(subset=["Link"], keep="last")
-           .set_index("Link")["Preço à vista"]
-           .astype(str)
-           .to_dict()
-    )
-
 
 def buscar_preco_amazon(asin):
     a = norm_asin(asin)
-    if a:
-        # procurar nos últimos FULLs por ASIN (mais recentes primeiro)
-        try:
-            amz_fulls = carregar_ultimos_amazon_full(5)
-            for df, ctime, path in amz_fulls:
-                if 'ASIN' in df.columns:
-                    df_asin = df[df['ASIN'].apply(lambda x: norm_asin(x) == a)]
-                    if not df_asin.empty:
-                        # pegar o preço da primeira ocorrência (arquivo mais recente)
-                        val = df_asin.iloc[0].get('Preço', '')
-                        if val and str(val).strip().lower() != 'nan':
-                            return str(val)
-        except Exception:
-            pass
-    return AMZ_PRICE.get(a, "Não disponível")
+    if not a:
+        return "Não disponível"
+
+    df_amz = _obter_df_amz()
+    if df_amz.empty or "ASIN" not in df_amz.columns:
+        return "Não disponível"
+
+    try:
+        df_match = df_amz[df_amz["ASIN"] == a]
+        if not df_match.empty and "Preço" in df_match.columns:
+            val = df_match.iloc[-1].get("Preço", "")
+            if val and str(val).strip().lower() != "nan":
+                return str(val)
+    except Exception:
+        pass
+
+    return "Não disponível"
 
 
 def buscar_preco_ml(asin, link):
     asin = norm_asin(asin)
-    if asin and asin.lower() != "nan":
-        # procurar nos últimos FULLs por ASIN (mais recentes primeiro)
-        try:
-            ml_fulls = carregar_ultimos_ml_full(5)
-            for df, ctime, path in ml_fulls:
-                if 'ASIN' in df.columns:
-                    df_asin = df[df['ASIN'].apply(lambda x: norm_asin(x) == asin)]
-                    if not df_asin.empty:
-                        val = df_asin.iloc[0].get('Preço à vista', '') or df_asin.iloc[0].get('Preço', '')
-                        if val and str(val).strip().lower() != 'nan':
-                            return str(val)
-        except Exception:
-            pass
-        p = ML_PRICE.get(asin)
-        if p and str(p).lower() != "nan":
-            return p
     link = norm_str(link)
-    if link:
-        p = ML_PRICE_LINK.get(link)
-        if p and str(p).lower() != "nan":
-            return p
+
+    df_ml = _obter_df_ml()
+    if df_ml.empty:
+        return "Não disponível"
+
+    try:
+        if asin and "ASIN" in df_ml.columns:
+            df_asin = df_ml[df_ml["ASIN"] == asin]
+            if not df_asin.empty:
+                val = df_asin.iloc[-1].get("Preço à vista", "") or df_asin.iloc[-1].get("Preço", "")
+                if val and str(val).strip().lower() != "nan":
+                    return str(val)
+
+        if link and "Link" in df_ml.columns:
+            df_link = df_ml[df_ml["Link"].astype(str).str.strip() == link]
+            if not df_link.empty:
+                val = df_link.iloc[-1].get("Preço à vista", "") or df_link.iloc[-1].get("Preço", "")
+                if val and str(val).strip().lower() != "nan":
+                    return str(val)
+    except Exception:
+        pass
+
     return "Não disponível"
 
 def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
@@ -1024,7 +1034,7 @@ def home():
 @app.route("/buscar", methods=["GET"])
 def buscar():
     # categories from amazon sample
-    df = DF_AMZ.copy()
+    df = _obter_df_amz().copy()
     df["Subcategoria"] = df["Subcategoria"].apply(limpar_categoria)
     df = df[df["Subcategoria"] != ""]
     categorias = ["Todas"] + sorted(df["Subcategoria"].unique().tolist())
