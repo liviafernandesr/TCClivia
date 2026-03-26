@@ -24,8 +24,10 @@ app = Flask(__name__)
 DF_COMP = carregar_comparacao_master_com_precos()
 DF_AMZ = carregar_amazon_sample()
 DF_ML = carregar_ml_sample()
+DF_COMP_LAST_REFRESH = time.time()
 
 CACHE_UPDATE_INTERVAL_SECONDS = 20 * 60
+DF_COMP_REFRESH_INTERVAL_SECONDS = int(os.getenv("DF_COMP_REFRESH_INTERVAL_SECONDS", "120"))
 SUMMARY_PIPELINE_VERSION = "v3"
 HF_SUMMARY_MODEL = os.getenv("HF_SUMMARY_MODEL", "google/flan-t5-small")
 HF_INFERENCE_TIMEOUT = int(os.getenv("HF_INFERENCE_TIMEOUT", "45"))
@@ -433,22 +435,22 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     temas_neg = [_tema_para_exibicao(t) for t in analise.get("temas_neg", [])[:2]]
 
     if pos > neg:
-        base = "O produto é bem avaliado pelos consumidores"
+        abertura = "O produto foi bem avaliado pela maioria dos consumidores."
     elif neg > pos:
-        base = "A percepção dos consumidores sobre o produto é mais crítica"
+        abertura = "As avaliações mostram uma percepção mais crítica sobre o produto."
     else:
-        base = "As avaliações do produto são equilibradas"
+        abertura = "As avaliações mostram percepção equilibrada sobre o produto."
 
-    if temas_pos and temas_neg:
-        return (
-            f"{base}, com destaque para {_formatar_lista_natural(temas_pos)}, "
-            f"mas com atenção a {_formatar_lista_natural(temas_neg)}."
-        )
+    elogios = ""
     if temas_pos:
-        return f"{base}, com destaque para {_formatar_lista_natural(temas_pos)}."
+        elogios = f"Os comentários destacam principalmente {_formatar_lista_natural(temas_pos)}."
+
+    ressalvas = ""
     if temas_neg:
-        return f"{base}, com atenção a {_formatar_lista_natural(temas_neg)}."
-    return f"{base}, com relatos consistentes sobre desempenho e experiência de uso."
+        ressalvas = f"Como ponto de atenção, aparecem menções a {_formatar_lista_natural(temas_neg)}."
+
+    fechamento = "No geral, a experiência de uso é vista como positiva, com ajustes pontuais de expectativa."
+    return " ".join(p for p in [abertura, elogios, ressalvas, fechamento] if p)
 
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
@@ -609,6 +611,21 @@ def _atualizar_cache_comentarios_se_necessario() -> None:
             atualizar_cache_comentarios(plataforma, 5)
 
 
+def _obter_df_comp_atualizado() -> pd.DataFrame:
+    """Recarrega o MASTER periodicamente para refletir mudanças sem restart."""
+    global DF_COMP, DF_COMP_LAST_REFRESH
+    try:
+        agora = time.time()
+        if (agora - DF_COMP_LAST_REFRESH) >= DF_COMP_REFRESH_INTERVAL_SECONDS:
+            novo_df = carregar_comparacao_master_com_precos()
+            if not novo_df.empty:
+                DF_COMP = novo_df
+            DF_COMP_LAST_REFRESH = agora
+    except Exception:
+        pass
+    return DF_COMP
+
+
 @lru_cache(maxsize=1)
 def _get_modelo_ia_resumo():
     """Carrega pipeline e prompt uma unica vez por processo."""
@@ -765,7 +782,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_amz, textos_amz):
             resumo_amz = ""
         if not _resumo_ia_aceitavel(resumo_amz):
-            raise RuntimeError("Resumo de IA inválido para Amazon")
+            resumo_amz = _resumo_natural_por_fatos(analise_amz)
+            resumo_amz = _deduplicar_frases(resumo_amz)
 
     resumo_ml = "Sem comentários suficientes no Mercado Livre."
     if textos_ml:
@@ -781,7 +799,8 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         if _resumo_parece_copia_comentario(resumo_ml, textos_ml):
             resumo_ml = ""
         if not _resumo_ia_aceitavel(resumo_ml):
-            raise RuntimeError("Resumo de IA inválido para Mercado Livre")
+            resumo_ml = _resumo_natural_por_fatos(analise_ml)
+            resumo_ml = _deduplicar_frases(resumo_ml)
 
     return {
         "amazon": resumo_amz,
@@ -1013,7 +1032,7 @@ def buscar():
     categoria = request.args.get("categoria", "Todas")
     produto = request.args.get("produto", "")
 
-    df_filtrado = DF_COMP.copy()
+    df_filtrado = _obter_df_comp_atualizado().copy()
     df_filtrado["ASIN Amazon"] = df_filtrado["ASIN Amazon"].apply(norm_asin)
 
     if categoria != "Todas":
@@ -1055,7 +1074,7 @@ def buscar():
 def detalhe_produto(produto_nome):
     """Página de detalhe do produto com comentários"""
     # Encontrar o produto na comparação
-    df_comp_copy = DF_COMP.copy()
+    df_comp_copy = _obter_df_comp_atualizado().copy()
     df_comp_copy["Produto Amazon"] = df_comp_copy["Produto Amazon"].astype(str)
     produto = df_comp_copy[df_comp_copy["Produto Amazon"] == produto_nome]
     

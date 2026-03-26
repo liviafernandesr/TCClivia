@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 import pandas as pd
 
 
@@ -8,11 +9,31 @@ def norm_str(x):
         return ""
     return str(x).strip()
 
+
+def _timestamp_no_nome(path: str):
+    """Extrai timestamp do padrão YYYY-MM-DD_HH-MM no nome do arquivo."""
+    nome = os.path.basename(path)
+    m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2})", nome)
+    if not m:
+        return None
+    return (m.group(1), m.group(2))
+
+
+def _chave_recencia(path: str):
+    """Prioriza timestamp do nome; fallback para ctime."""
+    ts = _timestamp_no_nome(path)
+    if ts is not None:
+        return (1, ts)
+    try:
+        return (0, os.path.getctime(path))
+    except Exception:
+        return (0, 0)
+
 def arquivo_mais_recente(padrao):
     arquivos = glob.glob(padrao)
     if not arquivos:
         return None
-    return max(arquivos, key=os.path.getctime)
+    return max(arquivos, key=_chave_recencia)
 
 def carregar_comparacao():
     arq = arquivo_mais_recente("data/comparacoes/comparacao_categorias_*.csv")
@@ -245,7 +266,7 @@ def arquivos_ultimos_n(padrao, n=5):
     *n* arquivos, todos são retornados.  O arquivo mais recente aparece primeiro.
     """
     arquivos = glob.glob(padrao)
-    arquivos.sort(key=os.path.getctime, reverse=True)
+    arquivos.sort(key=_chave_recencia, reverse=True)
     return arquivos[:n]
 
 
@@ -284,10 +305,9 @@ def carregar_comparacao_master_com_precos():
       `Preço Prod ML` imediatamente antes das colunas de link.
     """
     padrao_master = "data/comparacoes/comparacao_categorias_MASTER_*.csv"
-    arquivos_master = glob.glob(padrao_master)
-    if not arquivos_master:
+    arq_master = arquivo_mais_recente(padrao_master)
+    if not arq_master:
         return pd.DataFrame()
-    arq_master = max(arquivos_master, key=os.path.getctime)
     df = pd.read_csv(arq_master, sep=";", encoding="utf-8-sig")
     # corrigir eventuais problemas de codificação nos nomes de coluna
     rename_map = {
