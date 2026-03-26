@@ -316,7 +316,7 @@ def _resumo_aderente_aos_comentarios(resumo: str, comentarios: tuple[str, ...]) 
 
     inter = len(resumo_tokens & origem_tokens)
     taxa = inter / max(len(resumo_tokens), 1)
-    return taxa >= 0.35
+    return taxa >= 0.2
 
 
 def _formatar_lista_natural(itens: list[str]) -> str:
@@ -396,8 +396,8 @@ def _limpar_saida_llm(texto: str) -> str:
     s = _remover_frases_instrucao(s)
     s = re.sub(r"\s+", " ", s).strip()
     frases = [f.strip() for f in re.split(r"(?<=[\.!?])\s+", s) if f.strip()]
-    if len(frases) > 2:
-        s = " ".join(frases[:2]).strip()
+    if len(frases) > 4:
+        s = " ".join(frases[:4]).strip()
     return s
 
 
@@ -456,21 +456,39 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     if not comentarios:
         return ""
 
-    base_comentarios = []
-    for c in comentarios[:10]:
-        t = _limpar_meta_texto(c)
-        if t:
-            base_comentarios.append(t[:220])
+    tom = analise.get("tom", {})
+    pos = tom.get("positivo", 0)
+    neg = tom.get("negativo", 0)
+    neut = tom.get("neutro", 0)
+    qtd = analise.get("qtd", len(comentarios))
+    temas_pos = [_tema_para_exibicao(t) for t in analise.get("temas_pos", [])]
+    temas_neg = [_tema_para_exibicao(t) for t in analise.get("temas_neg", [])]
 
-    if not base_comentarios:
-        return ""
+    if pos > neg:
+        tom_geral = "predominantemente positivo"
+    elif neg > pos:
+        tom_geral = "mais crítico"
+    else:
+        tom_geral = "equilibrado"
 
-    contexto = " ".join(base_comentarios)
+    fatos = [
+        f"volume analisado: {qtd}",
+        f"tom geral: {tom_geral}",
+        f"distribuição de sentimento: positivos={pos}, neutros={neut}, negativos={neg}",
+    ]
+    if analise.get("media_nota") is not None:
+        fatos.append(f"nota média aproximada: {analise['media_nota']}")
+    if temas_pos:
+        fatos.append(f"pontos fortes recorrentes: {', '.join(temas_pos)}")
+    if temas_neg:
+        fatos.append(f"pontos de atenção: {', '.join(temas_neg)}")
+
     prompt = (
-        "Você é um assistente de resumo de avaliações. "
-        "Escreva APENAS um resumo curto em português do Brasil, com 1 ou 2 frases. "
-        "Use somente informações presentes nas avaliações abaixo, sem inventar fatos e sem mencionar plataforma.\n\n"
-        f"Avaliações: {contexto}\n\n"
+        "Você é um analista de reviews de produtos. "
+        "Escreva um resumo em português do Brasil, com 3 a 4 frases, tom natural e profissional. "
+        "Use apenas os fatos fornecidos, sem inventar dados e sem mencionar marketplace. "
+        "Não inclua instruções no texto final.\n\n"
+        f"Fatos consolidados: {'; '.join(fatos)}\n\n"
         "Resumo:"
     )
 
@@ -667,7 +685,7 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
         # 1) Tenta API remota (mais adequada para deploy no Render)
         try:
             via_api = _resumo_via_hf_inference_api(textos, analise)
-            if via_api and _resumo_aderente_aos_comentarios(via_api, textos):
+            if via_api:
                 return via_api
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
@@ -705,15 +723,16 @@ def _gerar_resumo_rag_cached(assinatura_comentarios: str, textos_amz: tuple[str,
             fatos.append(f"nota média aproximada: {analise['media_nota']}")
 
         prompt_fatos = (
-            "Resumo de avaliações de produto em português do Brasil.\n"
-            "Escreva um parágrafo curto, natural e profissional, sem mencionar a plataforma.\n"
+            "Você é um analista de reviews de produtos.\n"
+            "Escreva um resumo em português do Brasil, com 3 a 4 frases, tom natural e profissional.\n"
+            "Use apenas os fatos fornecidos, sem inventar dados e sem mencionar marketplace.\n"
             "Não inclua instruções no texto final e não use listas.\n\n"
             f"Fatos extraídos: {'; '.join(fatos)}\n\n"
-            "Saída final:"
+            "Resumo:"
         )
         try:
             out = _hf_generate_prompt(prompt_fatos, max_new_tokens=140, temperature=0.2)
-            if out and _resumo_aderente_aos_comentarios(out, textos_origem):
+            if out:
                 return out
             if not ALLOW_LOCAL_LLM_FALLBACK:
                 return ""
