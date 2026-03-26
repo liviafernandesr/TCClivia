@@ -7,6 +7,7 @@ import time
 import requests
 from urllib.parse import quote
 from functools import lru_cache
+from huggingface_hub import InferenceClient
 
 from utils.loaders import (
     carregar_comparacao_master_com_precos,
@@ -616,24 +617,23 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
     contexto = "\n".join(trechos)
 
     prompt = (
-        "Resuma as opiniões abaixo sobre um produto em um único parágrafo curto, natural e fluido, "
-        "em português do Brasil. O texto deve soar como um resumo editorial de experiência de consumidores. "
-        "Destaque a percepção geral, os elogios mais recorrentes e eventuais ressalvas de forma sutil. "
-        "Não mencione plataforma, quantidade de comentários, nota média ou percentuais. "
-        "Não use listas. Não invente fatos.\n\n"
+        "Resuma as opinioes abaixo sobre um produto em um unico paragrafo curto, natural e fluido, "
+        "em portugues do Brasil. O texto deve soar como um resumo editorial de experiencia de consumidores. "
+        "Destaque a percepcao geral, os elogios mais recorrentes e eventuais ressalvas de forma sutil. "
+        "Nao mencione plataforma, quantidade de comentarios, nota media ou percentuais. "
+        "Nao use listas. Nao invente fatos.\n\n"
         f"{contexto}\n\nResumo:"
     )
 
-    data = _hf_request_json({
+    texto = _hf_request_json({
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 120,
+            "max_new_tokens": 140,
             "temperature": 0.7,
-            "return_full_text": False,
         },
     })
 
-    return _extrair_texto_hf(data)
+    return norm_str(texto)
 
 
 def _hf_generate_prompt(prompt: str, max_new_tokens: int = 160, temperature: float = 0.2) -> str:
@@ -678,20 +678,15 @@ def _extrair_texto_hf(data) -> str:
     return _limpar_saida_llm(texto)
 
 
-def _hf_request_json(payload: dict) -> dict | list:
+def _hf_request_json(payload: dict) -> str:
     token = os.getenv("HF_API_TOKEN", "").strip()
     if not token:
         raise RuntimeError("HF_API_TOKEN nao configurado")
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
-
     modelos = []
     vistos = set()
     for model in (HF_SUMMARY_MODEL, *HF_SUMMARY_FALLBACK_MODELS):
-        m = model.strip()
+        m = (model or "").strip()
         if m and m not in vistos:
             vistos.add(m)
             modelos.append(m)
@@ -699,25 +694,49 @@ def _hf_request_json(payload: dict) -> dict | list:
     if not modelos:
         raise RuntimeError("Nenhum modelo configurado para resumo de IA")
 
+    prompt = payload.get("inputs", "")
+    params = payload.get("parameters", {}) or {}
+
     erros = []
+
     for model in modelos:
-        model_path = quote(model, safe="")
-        urls = [f"https://router.huggingface.co/hf-inference/models/{model_path}"]
-        for url in urls:
-            try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=HF_INFERENCE_TIMEOUT)
-            except requests.RequestException as exc:
-                erros.append(f"{model} @ {url}: erro de rede ({exc})")
-                continue
+        try:
+            client = InferenceClient(
+                provider="hf-inference",
+                api_key=token,
+            )
 
-            if resp.status_code >= 400:
-                erros.append(f"{model} @ {url}: HTTP {resp.status_code} ({resp.text[:120]})")
-                continue
+            out = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Voce resume opinioes reais de consumidores sobre produtos. "
+                            "Escreva um unico paragrafo curto, natural e fluido, em portugues do Brasil. "
+                            "Nao invente fatos, nao use listas, nao mencione plataforma, nota media, "
+                            "quantidade de comentarios ou percentuais."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                max_tokens=int(params.get("max_new_tokens", 140)),
+                temperature=float(params.get("temperature", 0.7)),
+            )
 
-            try:
-                return resp.json()
-            except ValueError:
-                erros.append(f"{model} @ {url}: resposta nao eh JSON valido")
+            texto = out.choices[0].message.content if out and out.choices else ""
+            texto = norm_str(texto)
+            if texto:
+                print(f"[HF OK] modelo={model} texto={texto[:200]}")
+                return texto
+
+            erros.append(f"{model}: resposta vazia")
+
+        except Exception as exc:
+            erros.append(f"{model}: {exc}")
 
     raise RuntimeError("HF API indisponivel apos tentativas: " + " | ".join(erros[:4]))
 
