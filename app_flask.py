@@ -30,12 +30,14 @@ USE_LLM_POLISH = os.getenv("USE_LLM_POLISH", "0") == "1"
 CACHE_UPDATE_INTERVAL_SECONDS = 20 * 60
 DF_COMP_REFRESH_INTERVAL_SECONDS = int(os.getenv("DF_COMP_REFRESH_INTERVAL_SECONDS", "120"))
 SUMMARY_PIPELINE_VERSION = "v3"
-HF_SUMMARY_MODEL = os.getenv("HF_SUMMARY_MODEL", "google/flan-t5-small")
-HF_INFERENCE_TIMEOUT = int(os.getenv("HF_INFERENCE_TIMEOUT", "45"))
-ALLOW_LOCAL_LLM_FALLBACK = os.getenv("ALLOW_LOCAL_LLM_FALLBACK", "0") == "1"
+HF_SUMMARY_MODEL = os.getenv("HF_SUMMARY_MODEL", "").strip()
 HF_SUMMARY_FALLBACK_MODELS = tuple(
-    m.strip() for m in os.getenv("HF_SUMMARY_FALLBACK_MODELS", "google/flan-t5-small").split(",") if m.strip()
+    m.strip()
+    for m in os.getenv("HF_SUMMARY_FALLBACK_MODELS", "").split(",")
+    if m.strip()
 )
+HF_INFERENCE_TIMEOUT = int(os.getenv("HF_INFERENCE_TIMEOUT", "60"))
+ALLOW_LOCAL_LLM_FALLBACK = os.getenv("ALLOW_LOCAL_LLM_FALLBACK", "0") == "1"
 
 # helper functions from streamlit app
 
