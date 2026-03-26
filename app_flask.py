@@ -107,6 +107,33 @@ def _parse_nota(nota_raw) -> float | None:
 def _normalizar_texto(texto: str) -> str:
     return re.sub(r"\s+", " ", norm_str(texto).lower()).strip()
 
+def _extrair_termos_relevantes(comentarios_plataforma: list[dict], limite: int = 3) -> list[str]:
+    stop = {
+        "de", "da", "do", "das", "dos", "a", "o", "as", "os", "e", "em", "na", "no", "nas", "nos",
+        "um", "uma", "uns", "umas", "para", "por", "com", "sem", "que", "se", "ao", "aos", "mais",
+        "muito", "muita", "produto", "produtos", "bom", "boa", "otimo", "otima", "excelente",
+        "amei", "perfeito", "perfeita", "recomendo", "qualidade", "vale", "rende", "chegou",
+        "rapido", "hidrata", "hidratante", "macia", "textura", "preco", "valor", "pele",
+    }
+
+    contagem = {}
+
+    for c in comentarios_plataforma:
+        texto = _normalizar_texto(c.get("texto", ""))
+        if not texto:
+            continue
+
+        tokens = re.findall(r"[a-zà-ÿ0-9-]+", texto)
+        for t in tokens:
+            if len(t) < 4:
+                continue
+            if t in stop:
+                continue
+            contagem[t] = contagem.get(t, 0) + 1
+
+    termos = [k for k, v in sorted(contagem.items(), key=lambda x: x[1], reverse=True) if v > 1]
+    return termos[:limite]
+
 
 def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], plataforma: str) -> dict:
     if not comentarios_plataforma:
@@ -117,6 +144,7 @@ def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], platafo
             "tom": {"positivo": 0, "neutro": 0, "negativo": 0},
             "temas_pos": [],
             "temas_neg": [],
+            "termos_top": [],
             "resumo": f"Sem comentários suficientes na {plataforma}.",
             "score_elogios": 0.0,
         }
@@ -155,12 +183,14 @@ def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], platafo
 
         score_pos = sum(1 for p in palavras_pos if p in texto)
         score_neg = sum(1 for p in palavras_neg if p in texto)
+
         if score_pos > score_neg:
             classe = "positivo"
         elif score_neg > score_pos:
             classe = "negativo"
         else:
             classe = "neutro"
+
         tom[classe] += 1
 
         for tema, kws in temas.items():
@@ -174,6 +204,7 @@ def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], platafo
     media_nota = round(sum(notas) / len(notas), 2) if notas else None
     temas_pos_top = [k for k, v in sorted(temas_pos.items(), key=lambda x: x[1], reverse=True) if v > 0][:3]
     temas_neg_top = [k for k, v in sorted(temas_neg.items(), key=lambda x: x[1], reverse=True) if v > 0][:2]
+    termos_top = _extrair_termos_relevantes(comentarios_plataforma, limite=3)
 
     predominio = "equilibrado"
     if tom["positivo"] > tom["negativo"]:
@@ -191,6 +222,8 @@ def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], platafo
         partes.append(f"Elogios mais recorrentes: {', '.join(temas_pos_top)}.")
     if temas_neg_top:
         partes.append(f"Pontos de atenção: {', '.join(temas_neg_top)}.")
+    if termos_top:
+        partes.append(f"Termos frequentes: {', '.join(termos_top)}.")
 
     score_elogios = (tom["positivo"] / max(qtd, 1)) * 0.6 + ((media_nota or 3.0) / 5.0) * 0.4
 
@@ -201,6 +234,7 @@ def _analisar_comentarios_plataforma(comentarios_plataforma: list[dict], platafo
         "tom": tom,
         "temas_pos": temas_pos_top,
         "temas_neg": temas_neg_top,
+        "termos_top": termos_top,
         "resumo": " ".join(partes),
         "score_elogios": round(score_elogios, 4),
     }
@@ -432,12 +466,12 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     tom = analise.get("tom", {})
     pos = tom.get("positivo", 0)
     neg = tom.get("negativo", 0)
-    neut = tom.get("neutro", 0)
     qtd = analise.get("qtd", 0)
     media = analise.get("media_nota")
 
     temas_pos = [_tema_para_exibicao(t) for t in analise.get("temas_pos", [])[:2]]
     temas_neg = [_tema_para_exibicao(t) for t in analise.get("temas_neg", [])[:1]]
+    termos_top = analise.get("termos_top", [])[:2]
 
     if qtd == 0:
         return "Ainda não há comentários suficientes para gerar um resumo confiável."
@@ -449,19 +483,26 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     else:
         abertura = "As opiniões mostram uma percepção equilibrada sobre o produto."
 
-    detalhes = []
+    corpo = []
+
     if temas_pos:
-        detalhes.append(f"Os comentários destacam principalmente {_formatar_lista_natural(temas_pos)}.")
+        corpo.append(f"Os comentários destacam principalmente {_formatar_lista_natural(temas_pos)}.")
+
+    if termos_top:
+        corpo.append(f"Também aparecem com frequência menções a {_formatar_lista_natural(termos_top)}.")
+
     if media is not None:
-        detalhes.append(f"A avaliação média observada ficou em {str(media).replace('.', ',')}/5.")
+        corpo.append(f"A avaliação média observada ficou em {str(media).replace('.', ',')}/5.")
 
-    ressalva = ""
     if temas_neg:
-        ressalva = f"Entre os pontos de atenção, aparecem menções a {_formatar_lista_natural(temas_neg)}."
+        corpo.append(f"Entre os pontos de atenção, aparecem menções a {_formatar_lista_natural(temas_neg)}.")
 
-    fechamento = "No geral, o produto é percebido como uma opção de bom custo-benefício dentro da proposta que oferece."
+    if pos >= neg:
+        fechamento = "No geral, a experiência relatada tende a ser positiva."
+    else:
+        fechamento = "No geral, a experiência relatada é mais mista e depende das expectativas de uso."
 
-    return " ".join([abertura] + detalhes + ([ressalva] if ressalva else []) + [fechamento])
+    return " ".join([abertura] + corpo + [fechamento])
 
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
