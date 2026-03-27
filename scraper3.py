@@ -17,6 +17,7 @@ from selenium.common.exceptions import TimeoutException
 import random
 from selenium_stealth import stealth
 import undetected_chromedriver as uc
+import subprocess
 
 # Tenta definir o formato de datas para português. Se não funcionar, ignora o erro.
 try:
@@ -31,6 +32,72 @@ MAX_TENTATIVAS = 3
 DELAY_BASE = 2
 DELAY_ALEATORIO = 3
 REINICIAR_A_CADA = 30  # Produtos
+
+
+def detectar_versao_principal_chrome():
+    """Detecta a versão principal do Google Chrome no Windows."""
+    # Tentativa 1: Registro do Windows (mais confiável)
+    try:
+        import winreg
+
+        chaves = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Google\Chrome\BLBeacon"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Google\Chrome\BLBeacon"),
+        ]
+
+        for hive, caminho in chaves:
+            try:
+                with winreg.OpenKey(hive, caminho) as key:
+                    versao, _ = winreg.QueryValueEx(key, "version")
+                    match = re.match(r"(\d+)\.", str(versao))
+                    if match:
+                        return int(match.group(1))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Tentativa 2: Executável do Chrome
+    caminhos = [
+        os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+    ]
+
+    for caminho in caminhos:
+        if not caminho or not os.path.exists(caminho):
+            continue
+        try:
+            proc = subprocess.run(
+                [caminho, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            saida = (proc.stdout or proc.stderr or "").strip()
+            match = re.search(r"(\d+)\.", saida)
+            if match:
+                return int(match.group(1))
+        except Exception:
+            continue
+
+    return None
+
+
+def criar_driver_uc(options):
+    """Cria o driver UC tentando casar a versão do driver com a versão do Chrome."""
+    versao_principal = detectar_versao_principal_chrome()
+
+    if versao_principal:
+        try:
+            print(f"   🌐 Chrome detectado: v{versao_principal}. Criando driver compatível...")
+            return uc.Chrome(options=options, version_main=versao_principal)
+        except Exception as e:
+            print(f"   ⚠️ Falha ao criar driver com versão fixa ({versao_principal}): {e}")
+            print("   🔁 Tentando criação automática do driver...")
+
+    return uc.Chrome(options=options)
 
 
 
@@ -131,7 +198,7 @@ def verificar_e_reiniciar_driver(driver, produto_atual, contador_reinicios):
     ultimo_erro = None
     for tentativa in range(1, MAX_TENTATIVAS + 1):
         try:
-            novo_driver = uc.Chrome(options=options)
+            novo_driver = criar_driver_uc(options)
 
             stealth(
                 novo_driver,
@@ -970,9 +1037,7 @@ def main():
         options.add_argument("--window-size=1920,1080")
         # options.add_argument("--headless")
 
-        driver = uc.Chrome(
-        options=options
-    )
+        driver = criar_driver_uc(options)
         
         stealth(driver,
             languages=["pt-BR", "pt"],

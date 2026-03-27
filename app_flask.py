@@ -594,8 +594,8 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
     return texto
 
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
-    print("[HF] entrou em _resumo_via_hf_inference_api")
-    print("[HF] qtd comentarios:", len(comentarios))
+    # print("[HF] entrou em _resumo_via_hf_inference_api")
+    # print("[HF] qtd comentarios:", len(comentarios))
 
     if not comentarios:
         return ""
@@ -639,7 +639,7 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
         },
     })
 
-    print("[HF] resumo retornado:", texto[:300] if texto else "VAZIO")
+    # print("[HF] resumo retornado:", texto[:300] if texto else "VAZIO")
     return norm_str(texto)
 
 
@@ -702,7 +702,7 @@ def _hf_request_json(payload: dict) -> str:
             vistos.add(m)
             modelos.append(m)
 
-    print("[HF] modelos finais:", modelos)
+    # print("[HF] modelos finais:", modelos)
 
     if not modelos:
         raise RuntimeError("Nenhum modelo configurado para resumo de IA")
