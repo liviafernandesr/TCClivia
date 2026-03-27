@@ -717,19 +717,35 @@ def _hf_request_json(payload: dict) -> str:
             print(f"[HF] tentando modelo: {model}")
 
             client = InferenceClient(
+                provider="auto",
+                api_key=token,
+            )
+
+            out = client.chat.completions.create(
                 model=model,
-                token=token,
-                timeout=HF_INFERENCE_TIMEOUT,
-            )
-
-            out = client.text_generation(
-                prompt,
-                max_new_tokens=int(params.get("max_new_tokens", 140)),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Voce resume opinioes reais de consumidores sobre produtos. "
+                            "Escreva um unico paragrafo curto, natural e fluido, em portugues do Brasil. "
+                            "Nao invente fatos, nao use listas, nao mencione plataforma, nota media, "
+                            "quantidade de comentarios ou percentuais."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                max_tokens=int(params.get("max_new_tokens", 140)),
                 temperature=float(params.get("temperature", 0.7)),
-                return_full_text=False,
             )
 
-            texto = norm_str(out)
+            print("[HF] resposta bruta:", out)
+
+            texto = out.choices[0].message.content if out and out.choices else ""
+            texto = norm_str(texto)
             print("[HF] texto final:", texto[:300] if texto else "VAZIO")
 
             if texto:
