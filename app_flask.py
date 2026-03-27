@@ -596,7 +596,7 @@ def _resumo_natural_por_fatos(analise: dict) -> str:
 def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) -> str:
     print("[HF] entrou em _resumo_via_hf_inference_api")
     print("[HF] qtd comentarios:", len(comentarios))
-    
+
     if not comentarios:
         return ""
 
@@ -638,6 +638,7 @@ def _resumo_via_hf_inference_api(comentarios: tuple[str, ...], analise: dict) ->
             "temperature": 0.7,
         },
     })
+
     print("[HF] resumo retornado:", texto[:300] if texto else "VAZIO")
     return norm_str(texto)
 
@@ -714,36 +715,21 @@ def _hf_request_json(payload: dict) -> str:
     for model in modelos:
         try:
             print(f"[HF] tentando modelo: {model}")
+
             client = InferenceClient(
-                provider="hf-inference",
-                api_key=token,
-            )
-
-            out = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Voce resume opinioes reais de consumidores sobre produtos. "
-                            "Escreva um unico paragrafo curto, natural e fluido, em portugues do Brasil. "
-                            "Nao invente fatos, nao use listas, nao mencione plataforma, nota media, "
-                            "quantidade de comentarios ou percentuais."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                max_tokens=int(params.get("max_new_tokens", 140)),
-                temperature=float(params.get("temperature", 0.7)),
+                token=token,
+                timeout=HF_INFERENCE_TIMEOUT,
             )
 
-            print("[HF] resposta bruta:", out)
+            out = client.text_generation(
+                prompt,
+                max_new_tokens=int(params.get("max_new_tokens", 140)),
+                temperature=float(params.get("temperature", 0.7)),
+                return_full_text=False,
+            )
 
-            texto = out.choices[0].message.content if out and out.choices else ""
-            texto = norm_str(texto)
+            texto = norm_str(out)
             print("[HF] texto final:", texto[:300] if texto else "VAZIO")
 
             if texto:
