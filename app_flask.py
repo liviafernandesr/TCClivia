@@ -61,6 +61,7 @@ def limpar_categoria(cat: str) -> str:
     return c
 
 
+
 def parse_price_value(p):
     """Converte uma string de preço para float (ou retorna None)."""
     if pd.isna(p):
@@ -876,6 +877,8 @@ def _qtd_fulls_para_cache_bootstrap(plataforma: str) -> int:
 
 def _atualizar_cache_comentarios_se_necessario() -> None:
     """Evita recarregar cache a cada request de detalhe."""
+    os.makedirs(os.path.join("data", "cache"), exist_ok=True)
+
     for plataforma in ("amazon", "ml"):
         cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
         deve_atualizar = True
@@ -889,6 +892,7 @@ def _atualizar_cache_comentarios_se_necessario() -> None:
 
         if deve_atualizar:
             qtd_fulls = _qtd_fulls_para_cache_bootstrap(plataforma)
+            print(f"[CACHE] Atualizando cache {plataforma} com {qtd_fulls} FULLs em {cache_path}")
             atualizar_cache_comentarios(plataforma, qtd_fulls)
 
 def _obter_df_comp_atualizado() -> pd.DataFrame:
@@ -1239,52 +1243,53 @@ def buscar_comentarios_produto(
                     'data': row.get('Data Comentário', '')
                 })
 
-    # --------------------------------------------------
-    # Mercado Livre
-    if nome_ml is None:
-        nome_ml = nome_amazon
+        # --------------------------------------------------
+        # Mercado Livre
+        if nome_ml is None:
+            nome_ml = nome_amazon
 
-    asin_ml_norm = norm_asin(asin_ml) if asin_ml else ""
+        asin_ml_norm = norm_asin(asin_ml) if asin_ml else ""
 
-    if nome_ml or asin_ml_norm:
-        ml_fulls = carregar_ultimos_ml_full(_qtd_fulls_para_cache_bootstrap("ml"))
-        seen_texts_ml = set()
+        if nome_ml or asin_ml_norm:
+            ml_fulls = carregar_ultimos_ml_full(_qtd_fulls_para_cache_bootstrap("ml"))
+            seen_texts_ml = set()
 
-        for df, ctime, path in ml_fulls:
-            if df.empty:
-                continue
-
-            df_prod = pd.DataFrame()
-
-            # 1) tenta primeiro por ASIN do Mercado Livre
-            if asin_ml_norm and 'ASIN' in df.columns:
-                df['ASIN'] = df['ASIN'].apply(norm_asin)
-                df_prod = df[df['ASIN'] == asin_ml_norm]
-
-            # 2) fallback por nome, se não encontrou nada por ASIN
-            if df_prod.empty and nome_ml and 'Nome' in df.columns:
-                nome_norm_ml = norm_str(nome_ml).upper()
-                df_prod = df[df['Nome'].apply(lambda x: norm_str(x).upper() == nome_norm_ml)]
-
-            for _, row in df_prod.iterrows():
-                comentario = norm_str(row.get('Comentário', ''))
-                if not comentario:
-                    continue
-                if comentario in seen_texts_ml:
+            for df, ctime, path in ml_fulls:
+                if df.empty:
                     continue
 
-                seen_texts_ml.add(comentario)
-                comentarios['ml'].append({
-                    'texto': comentario,
-                    'nota': row.get('Nota Comentário', ''),
-                    'data': row.get('Data Comentário', '')
-                })
+                df_prod = pd.DataFrame()
+
+                # 1) tenta primeiro por ASIN/MLB
+                if asin_ml_norm and "ASIN" in df.columns:
+                    df["ASIN"] = df["ASIN"].apply(norm_asin)
+                    df_prod = df[df["ASIN"] == asin_ml_norm]
+
+                # 2) fallback por nome
+                if df_prod.empty and nome_ml and "Nome" in df.columns:
+                    nome_norm_ml = norm_str(nome_ml).upper()
+                    df_prod = df[df["Nome"].apply(lambda x: norm_str(x).upper() == nome_norm_ml)]
+
+                for _, row in df_prod.iterrows():
+                    comentario = norm_str(row.get("Comentário", ""))
+                    if not comentario:
+                        continue
+                    if comentario in seen_texts_ml:
+                        continue
+
+                    seen_texts_ml.add(comentario)
+                    comentarios["ml"].append({
+                        "texto": comentario,
+                        "nota": row.get("Nota Comentário", ""),
+                        "data": row.get("Data Comentário", "")
+                    })
 
     return comentarios
 
 @app.route("/", methods=["GET"])
 def home():
     return render_template("home.html")
+
 
 @app.route("/buscar", methods=["GET"])
 def buscar():
