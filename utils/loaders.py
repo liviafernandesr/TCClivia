@@ -238,23 +238,53 @@ def atualizar_cache_comentarios(platform, n=5):
     return df_cache
 
 
-def buscar_comentarios_cache_por_produto(platform, produto_nome):
-    df = carregar_cache_comentarios(platform)
+def buscar_comentarios_cache_por_produto(plataforma, asin="", nome=""):
+    cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
+
+    if not os.path.exists(cache_path):
+        return []
+
+    df = pd.read_csv(cache_path, sep=";", encoding="utf-8-sig")
+
     if df.empty:
         return []
-    nome_norm = norm_str(produto_nome).upper()
-    def match(nome):
-        return norm_str(nome).upper() == nome_norm
-    df_filtrado = df[df['produto'].astype(str).apply(match)]
-    resultados = []
-    for _, r in df_filtrado.iterrows():
-        resultados.append({
-            'texto': r.get('texto', ''),
-            'nota': r.get('nota', ''),
-            'data': r.get('data', ''),
-            'origem': r.get('origem', ''),
-        })
-    return resultados
+
+    if "ASIN" in df.columns:
+        df["ASIN"] = df["ASIN"].astype(str).str.strip().str.upper()
+
+    asin = str(asin).strip().upper()
+    nome = str(nome).strip().upper()
+
+    # 1) tenta por ASIN
+    if asin and "ASIN" in df.columns:
+        df_prod = df[df["ASIN"] == asin]
+        if not df_prod.empty:
+            return [
+                {
+                    "texto": str(row.get("Comentário", "")).strip(),
+                    "nota": row.get("Nota Comentário", ""),
+                    "data": row.get("Data Comentário", "")
+                }
+                for _, row in df_prod.iterrows()
+                if str(row.get("Comentário", "")).strip()
+            ]
+
+    # 2) fallback por nome
+    if nome and "Nome" in df.columns:
+        df["Nome_norm"] = df["Nome"].astype(str).str.strip().str.upper()
+        df_prod = df[df["Nome_norm"] == nome]
+
+        return [
+            {
+                "texto": str(row.get("Comentário", "")).strip(),
+                "nota": row.get("Nota Comentário", ""),
+                "data": row.get("Data Comentário", "")
+            }
+            for _, row in df_prod.iterrows()
+            if str(row.get("Comentário", "")).strip()
+        ]
+
+    return []
 
 
 # --------- novos helpers adicionados pela solicitação ------------

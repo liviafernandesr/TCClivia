@@ -16,7 +16,6 @@ from utils.loaders import (
     carregar_ultimos_amazon_full,
     carregar_ultimos_ml_full,
     atualizar_cache_comentarios,
-    buscar_comentarios_cache_por_produto,
 )
 
 app = Flask(__name__)
@@ -773,6 +772,7 @@ def _qtd_fulls_para_cache_bootstrap(plataforma: str) -> int:
 
 def _atualizar_cache_comentarios_se_necessario() -> None:
     """Evita recarregar cache a cada request de detalhe."""
+    os.makedirs(os.path.join("data", "cache"), exist_ok=True)
     for plataforma in ("amazon", "ml"):
         cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
         deve_atualizar = True
@@ -1093,13 +1093,16 @@ def buscar_preco_ml(asin, link):
 
     return "Não disponível"
 
-def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
-    """Recupera avaliações de Amazon e Mercado Livre para um par de nomes.
+def buscar_comentarios_produto(
+    nome_amazon: str,
+    nome_ml: str | None = None,
+    asin_amazon: str | None = None,
+    asin_ml: str | None = None,
+):
+    """Recupera avaliações de Amazon e Mercado Livre.
 
-    A comparação é feita diretamente contra a coluna ``Nome`` dos arquivos
-    *FULL* de cada plataforma. Passar ``nome_ml`` garante que usamos o
-    valor da coluna **Produto Mercado Livre** da base de comparação (que pode
-    ser diferente do nome Amazon).
+    Amazon: busca principalmente por nome.
+    Mercado Livre: busca prioritariamente por ASIN/MLB, com fallback por nome.
 
     Retorna um dicionário com duas listas sob as chaves ``amazon`` e ``ml``.
     Cada item é um dict contendo ``texto``, ``nota`` e ``data``.
@@ -1112,17 +1115,20 @@ def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
         nome_norm = norm_str(nome_amazon).upper()
         amz_fulls = carregar_ultimos_amazon_full(_qtd_fulls_para_cache_bootstrap("amazon"))
         seen_texts = set()
+
         for df, ctime, path in amz_fulls:
             if 'Nome' not in df.columns:
                 continue
+
             df_prod = df[df['Nome'].apply(lambda x: norm_str(x).upper() == nome_norm)]
+
             for _, row in df_prod.iterrows():
                 comentario = norm_str(row.get('Comentário', ''))
                 if not comentario:
                     continue
-                # evitar duplicatas de texto, preferindo os mais recentes
                 if comentario in seen_texts:
                     continue
+
                 seen_texts.add(comentario)
                 comentarios['amazon'].append({
                     'texto': comentario,
@@ -1133,23 +1139,37 @@ def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
     # --------------------------------------------------
     # Mercado Livre
     if nome_ml is None:
-        # se não passou nome_ml, tente reaproveitar o mesmo nome Amazon
         nome_ml = nome_amazon
 
-    if nome_ml:
-        nome_norm_ml = norm_str(nome_ml).upper()
+    asin_ml_norm = norm_asin(asin_ml) if asin_ml else ""
+
+    if nome_ml or asin_ml_norm:
         ml_fulls = carregar_ultimos_ml_full(_qtd_fulls_para_cache_bootstrap("ml"))
         seen_texts_ml = set()
+
         for df, ctime, path in ml_fulls:
-            if 'Nome' not in df.columns:
+            if df.empty:
                 continue
-            df_prod = df[df['Nome'].apply(lambda x: norm_str(x).upper() == nome_norm_ml)]
+
+            df_prod = pd.DataFrame()
+
+            # 1) tenta primeiro por ASIN do Mercado Livre
+            if asin_ml_norm and 'ASIN' in df.columns:
+                df['ASIN'] = df['ASIN'].apply(norm_asin)
+                df_prod = df[df['ASIN'] == asin_ml_norm]
+
+            # 2) fallback por nome, se não encontrou nada por ASIN
+            if df_prod.empty and nome_ml and 'Nome' in df.columns:
+                nome_norm_ml = norm_str(nome_ml).upper()
+                df_prod = df[df['Nome'].apply(lambda x: norm_str(x).upper() == nome_norm_ml)]
+
             for _, row in df_prod.iterrows():
                 comentario = norm_str(row.get('Comentário', ''))
                 if not comentario:
                     continue
                 if comentario in seen_texts_ml:
                     continue
+
                 seen_texts_ml.add(comentario)
                 comentarios['ml'].append({
                     'texto': comentario,
@@ -1228,13 +1248,18 @@ def detalhe_produto(asin_amazon):
 
     _atualizar_cache_comentarios_se_necessario()
 
+    asin_amazon = norm_asin(produto_info.get("ASIN Amazon", ""))
+    asin_ml = norm_asin(produto_info.get("ASIN Mercado Livre", ""))
+
     nome_amazon = produto_info.get("Produto Amazon", "")
     nome_ml = produto_info.get("Produto Mercado Livre", "")
 
-    comentarios = {
-        "amazon": buscar_comentarios_cache_por_produto("amazon", nome_amazon),
-        "ml": buscar_comentarios_cache_por_produto("ml", nome_ml if nome_ml else nome_amazon),
-    }
+    comentarios = buscar_comentarios_produto(
+        nome_amazon=produto_info.get("Produto Amazon", ""),
+        nome_ml=produto_info.get("Produto Mercado Livre", ""),
+        asin_amazon=produto_info.get("ASIN Amazon", ""),
+        asin_ml=produto_info.get("ASIN Mercado Livre", ""),
+    )
 
     resumo_comentarios = gerar_resumo_comentarios(comentarios)
 
