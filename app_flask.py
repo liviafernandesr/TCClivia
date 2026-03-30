@@ -772,7 +772,6 @@ def _qtd_fulls_para_cache_bootstrap(plataforma: str) -> int:
 
 def _atualizar_cache_comentarios_se_necessario() -> None:
     """Evita recarregar cache a cada request de detalhe."""
-    os.makedirs(os.path.join("data", "cache"), exist_ok=True)
     for plataforma in ("amazon", "ml"):
         cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
         deve_atualizar = True
