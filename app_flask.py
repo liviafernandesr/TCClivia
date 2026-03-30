@@ -74,6 +74,110 @@ def parse_price_value(p):
     except ValueError:
         return None
 
+def tem_valor_preco(v) -> bool:
+    """Retorna True se o preço é realmente utilizável."""
+    if pd.isna(v):
+        return False
+    s = str(v).strip()
+    if not s:
+        return False
+    if s.lower() in {"nan", "none", "não disponível", "nao disponivel"}:
+        return False
+    return True
+
+
+def _qtd_fulls_para_cache_bootstrap(plataforma: str) -> int:
+    """
+    Se o cache ainda não existe, faz uma carga inicial maior (15 FULLs).
+    Depois volta ao padrão leve (5 FULLs).
+    """
+    cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
+    return 15 if not os.path.exists(cache_path) else 5
+
+
+def buscar_comentarios_produto(
+    nome_amazon: str,
+    nome_ml: str | None = None,
+    asin_amazon: str | None = None,
+    asin_ml: str | None = None,
+):
+    """
+    Recupera comentários diretamente dos FULLs.
+    Amazon: busca por nome.
+    Mercado Livre: busca prioritariamente por ASIN/MLB, com fallback por nome.
+    """
+    comentarios = {"amazon": [], "ml": []}
+
+    # ----------------------------
+    # Amazon
+    if nome_amazon:
+        nome_norm = norm_str(nome_amazon).upper()
+        amz_fulls = carregar_ultimos_amazon_full(_qtd_fulls_para_cache_bootstrap("amazon"))
+        seen_texts = set()
+
+        for df, ctime, path in amz_fulls:
+            if "Nome" not in df.columns:
+                continue
+
+            df_prod = df[df["Nome"].apply(lambda x: norm_str(x).upper() == nome_norm)]
+
+            for _, row in df_prod.iterrows():
+                comentario = norm_str(row.get("Comentário", ""))
+                if not comentario:
+                    continue
+                if comentario in seen_texts:
+                    continue
+
+                seen_texts.add(comentario)
+                comentarios["amazon"].append({
+                    "texto": comentario,
+                    "nota": row.get("Nota Comentário", ""),
+                    "data": row.get("Data Comentário", "")
+                })
+
+    # ----------------------------
+    # Mercado Livre
+    if nome_ml is None:
+        nome_ml = nome_amazon
+
+    asin_ml_norm = norm_asin(asin_ml) if asin_ml else ""
+
+    if nome_ml or asin_ml_norm:
+        ml_fulls = carregar_ultimos_ml_full(_qtd_fulls_para_cache_bootstrap("ml"))
+        seen_texts_ml = set()
+
+        for df, ctime, path in ml_fulls:
+            if df.empty:
+                continue
+
+            df_prod = pd.DataFrame()
+
+            # 1) tenta primeiro por ASIN/MLB
+            if asin_ml_norm and "ASIN" in df.columns:
+                df["ASIN"] = df["ASIN"].apply(norm_asin)
+                df_prod = df[df["ASIN"] == asin_ml_norm]
+
+            # 2) fallback por nome
+            if df_prod.empty and nome_ml and "Nome" in df.columns:
+                nome_norm_ml = norm_str(nome_ml).upper()
+                df_prod = df[df["Nome"].apply(lambda x: norm_str(x).upper() == nome_norm_ml)]
+
+            for _, row in df_prod.iterrows():
+                comentario = norm_str(row.get("Comentário", ""))
+                if not comentario:
+                    continue
+                if comentario in seen_texts_ml:
+                    continue
+
+                seen_texts_ml.add(comentario)
+                comentarios["ml"].append({
+                    "texto": comentario,
+                    "nota": row.get("Nota Comentário", ""),
+                    "data": row.get("Data Comentário", "")
+                })
+
+    return comentarios
+
 
 def _extrair_textos_comentarios(comentarios_plataforma: list[dict], limite: int = 40) -> list[str]:
     """Formata os comentarios em strings curtas para indexacao/consulta."""
@@ -1207,12 +1311,16 @@ def buscar():
 
     # attach prices if missing
     df_filtrado["Preço Prod Amazon"] = df_filtrado.apply(
-        lambda r: buscar_preco_amazon(r["ASIN Amazon"]) if not r.get("Preço Prod Amazon") else r.get("Preço Prod Amazon"),
+        lambda r: r.get("Preço Prod Amazon")
+        if tem_valor_preco(r.get("Preço Prod Amazon"))
+        else buscar_preco_amazon(r["ASIN Amazon"]),
         axis=1
     )
+
     df_filtrado["Preço Prod ML"] = df_filtrado.apply(
-        lambda r: buscar_preco_ml(r.get("ASIN Mercado Livre", ""), r.get("Link Mercado Livre", ""))
-        if not r.get("Preço Prod ML") else r.get("Preço Prod ML"),
+        lambda r: r.get("Preço Prod ML")
+        if tem_valor_preco(r.get("Preço Prod ML"))
+        else buscar_preco_ml(r.get("ASIN Mercado Livre", ""), r.get("Link Mercado Livre", "")),
         axis=1
     )
 
@@ -1262,10 +1370,10 @@ def detalhe_produto(asin_amazon):
 
     resumo_comentarios = gerar_resumo_comentarios(comentarios)
 
-    if not produto_info.get("Preço Prod Amazon"):
+    if not tem_valor_preco(produto_info.get("Preço Prod Amazon")):
         produto_info["Preço Prod Amazon"] = buscar_preco_amazon(produto_info.get("ASIN Amazon", ""))
 
-    if not produto_info.get("Preço Prod ML"):
+    if not tem_valor_preco(produto_info.get("Preço Prod ML")):
         produto_info["Preço Prod ML"] = buscar_preco_ml(
             produto_info.get("ASIN Mercado Livre", ""),
             produto_info.get("Link Mercado Livre", "")
