@@ -763,21 +763,30 @@ def _hf_request_json(payload: dict) -> str:
 def _limpar_meta_texto(texto: str) -> str:
     return re.sub(r"^\[[^\]]*\]\s*", "", norm_str(texto))
 
+def _qtd_fulls_para_cache_bootstrap(plataforma: str) -> int:
+    """
+    Se o cache ainda não existe, faz uma carga inicial maior (15 FULLs).
+    Depois volta ao padrão leve (5 FULLs).
+    """
+    cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
+    return 15 if not os.path.exists(cache_path) else 5
 
 def _atualizar_cache_comentarios_se_necessario() -> None:
-    """Evita recarregar cache a cada request de detalhe (reduz travamentos)."""
+    """Evita recarregar cache a cada request de detalhe."""
     for plataforma in ("amazon", "ml"):
         cache_path = os.path.join("data", "cache", f"comments_{plataforma}.csv")
         deve_atualizar = True
+
         if os.path.exists(cache_path):
             try:
                 idade = time.time() - os.path.getmtime(cache_path)
                 deve_atualizar = idade >= CACHE_UPDATE_INTERVAL_SECONDS
             except Exception:
                 deve_atualizar = True
-        if deve_atualizar:
-            atualizar_cache_comentarios(plataforma, 5)
 
+        if deve_atualizar:
+            qtd_fulls = _qtd_fulls_para_cache_bootstrap(plataforma)
+            atualizar_cache_comentarios(plataforma, qtd_fulls)
 
 def _obter_df_comp_atualizado() -> pd.DataFrame:
     global DF_COMP, DF_COMP_LAST_REFRESH
@@ -1101,7 +1110,7 @@ def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
     # Amazon -- procurar nos últimos N FULLs (mais recentes primeiro)
     if nome_amazon:
         nome_norm = norm_str(nome_amazon).upper()
-        amz_fulls = carregar_ultimos_amazon_full(5)
+        amz_fulls = carregar_ultimos_amazon_full(_qtd_fulls_para_cache_bootstrap("amazon"))
         seen_texts = set()
         for df, ctime, path in amz_fulls:
             if 'Nome' not in df.columns:
@@ -1129,7 +1138,7 @@ def buscar_comentarios_produto(nome_amazon: str, nome_ml: str | None = None):
 
     if nome_ml:
         nome_norm_ml = norm_str(nome_ml).upper()
-        ml_fulls = carregar_ultimos_ml_full(5)
+        ml_fulls = carregar_ultimos_ml_full(_qtd_fulls_para_cache_bootstrap("ml"))
         seen_texts_ml = set()
         for df, ctime, path in ml_fulls:
             if 'Nome' not in df.columns:
@@ -1203,50 +1212,52 @@ def buscar():
         resultados=df_filtrado.to_dict(orient="records"),
     )
 
-@app.route("/produto/<produto_nome>", methods=["GET"])
-def detalhe_produto(produto_nome):
+@app.route("/produto/<asin_amazon>", methods=["GET"])
+def detalhe_produto(asin_amazon):
     """Página de detalhe do produto com comentários"""
-    # Encontrar o produto na comparação
     df_comp_copy = _obter_df_comp_atualizado().copy()
-    df_comp_copy["Produto Amazon"] = df_comp_copy["Produto Amazon"].astype(str)
-    produto = df_comp_copy[df_comp_copy["Produto Amazon"] == produto_nome]
-    
+    df_comp_copy["ASIN Amazon"] = df_comp_copy["ASIN Amazon"].apply(norm_asin)
+
+    asin_amazon = norm_asin(asin_amazon)
+    produto = df_comp_copy[df_comp_copy["ASIN Amazon"] == asin_amazon]
+
     if produto.empty:
         return render_template("erro.html", mensagem="Produto não encontrado"), 404
-    
+
     produto_info = produto.iloc[0].to_dict()
-    
-    # Atualiza cache somente quando estiver vencido (evita lentidao e timeout)
+
     _atualizar_cache_comentarios_se_necessario()
 
     nome_amazon = produto_info.get("Produto Amazon", "")
     nome_ml = produto_info.get("Produto Mercado Livre", "")
+
     comentarios = {
-        'amazon': buscar_comentarios_cache_por_produto('amazon', nome_amazon),
-        'ml': buscar_comentarios_cache_por_produto('ml', nome_ml if nome_ml else nome_amazon),
+        "amazon": buscar_comentarios_cache_por_produto("amazon", nome_amazon),
+        "ml": buscar_comentarios_cache_por_produto("ml", nome_ml if nome_ml else nome_amazon),
     }
+
     resumo_comentarios = gerar_resumo_comentarios(comentarios)
-    
-    # Buscar preços se não existem
+
     if not produto_info.get("Preço Prod Amazon"):
         produto_info["Preço Prod Amazon"] = buscar_preco_amazon(produto_info.get("ASIN Amazon", ""))
+
     if not produto_info.get("Preço Prod ML"):
         produto_info["Preço Prod ML"] = buscar_preco_ml(
             produto_info.get("ASIN Mercado Livre", ""),
             produto_info.get("Link Mercado Livre", "")
         )
 
-    # compute and store best-price indicator for template reuse
     produto_info["Melhor Preço"] = melhor_plataforma(
         produto_info.get("Preço Prod Amazon"),
         produto_info.get("Preço Prod ML"),
     )
 
-    # Marcar classes para estilizar o preço mais barato (+verde) e mais caro (+amarelo)
     produto_info["amazon_price_class"] = ""
     produto_info["ml_price_class"] = ""
+
     pa = parse_price_value(produto_info.get("Preço Prod Amazon"))
     pm = parse_price_value(produto_info.get("Preço Prod ML"))
+
     if pa is None and pm is None:
         pass
     elif pa is None:
@@ -1260,7 +1271,7 @@ def detalhe_produto(produto_nome):
         elif pm < pa:
             produto_info["ml_price_class"] = "price-cheap"
             produto_info["amazon_price_class"] = "price-expensive"
-    
+
     return render_template(
         "produto_detail.html",
         produto=produto_info,
