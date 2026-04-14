@@ -16,6 +16,7 @@ from utils.loaders import (
     carregar_ultimos_amazon_full,
     carregar_ultimos_ml_full,
     atualizar_cache_comentarios,
+    arquivo_mais_recente,
 )
 
 app = Flask(__name__)
@@ -216,6 +217,39 @@ def _parse_nota(nota_raw) -> float | None:
 
 def _normalizar_texto(texto: str) -> str:
     return re.sub(r"\s+", " ", norm_str(texto).lower()).strip()
+
+
+def _formatar_data_ultima_coleta() -> str:
+    """Retorna a data/hora da coleta mais recente entre os principais CSVs."""
+    padroes = [
+        "data/comparacoes/comparacao_categorias_MASTER_*.csv",
+        "data/resultados_amazon/mais_vendidos_amazon_SAMPLE_*.csv",
+        "data/resultados_ml/mais_vendidos_ml_SAMPLE_*.csv",
+        "data/resultados_amazon/mais_vendidos_amazon_FULL_*.csv",
+        "data/resultados_ml/mais_vendidos_ml_FULL_*.csv",
+    ]
+
+    candidatos = []
+    for padrao in padroes:
+        arq = arquivo_mais_recente(padrao)
+        if arq:
+            candidatos.append(arq)
+
+    if not candidatos:
+        return "data indisponível"
+
+    arq_mais_recente = max(candidatos, key=lambda p: os.path.getctime(p))
+    nome = os.path.basename(arq_mais_recente)
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})", nome)
+    if m:
+        ano, mes, dia, hora, minuto = m.groups()
+        return f"{dia}/{mes}/{ano} {hora}:{minuto}"
+
+    try:
+        ts = os.path.getctime(arq_mais_recente)
+        return time.strftime("%d/%m/%Y %H:%M", time.localtime(ts))
+    except Exception:
+        return "data indisponível"
 
 def _extrair_termos_relevantes(comentarios_plataforma: list[dict], limite: int = 3) -> list[str]:
     stop = {
@@ -1300,7 +1334,7 @@ def buscar():
     categorias = ["Todas"] + sorted(df["Subcategoria"].unique().tolist())
 
     categoria = request.args.get("categoria", "Todas")
-    produto = request.args.get("produto", "")
+    produto = request.args.get("produto", "").strip()
 
     df_filtrado = _obter_df_comp_atualizado().copy()
     df_filtrado["ASIN Amazon"] = df_filtrado["ASIN Amazon"].apply(norm_asin)
@@ -1310,9 +1344,16 @@ def buscar():
         df_filtrado = df_filtrado[df_filtrado["ASIN Amazon"].isin(asins_cat)]
 
     if produto:
-        df_filtrado = df_filtrado[df_filtrado["Produto Amazon"] == produto]
+        mask_produto = (
+            df_filtrado["Produto Amazon"]
+            .fillna("")
+            .astype(str)
+            .str.contains(re.escape(produto), case=False, na=False)
+        )
+        df_filtrado = df_filtrado[mask_produto]
 
     produtos = sorted([p for p in df_filtrado["Produto Amazon"].unique().tolist() if p])
+    data_ultima_coleta = _formatar_data_ultima_coleta()
 
     # attach prices if missing
     df_filtrado["Preço Prod Amazon"] = df_filtrado.apply(
@@ -1341,6 +1382,7 @@ def buscar():
         produtos=produtos,
         escolha_categoria=categoria,
         escolha_produto=produto,
+        data_ultima_coleta=data_ultima_coleta,
         resultados=df_filtrado.to_dict(orient="records"),
     )
 

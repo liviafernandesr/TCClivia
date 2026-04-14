@@ -13,17 +13,22 @@
   </div>
   <div class="col-md-4">
     <label class="form-label">Produto</label>
-    <select name="produto" class="form-select">
-      <option value="">(todos)</option>
-      {% for prod in produtos %}
-      <option value="{{prod}}" {% if escolha_produto==prod %}selected{% endif %}>{{prod}}</option>
-      {% endfor %}
-    </select>
+    <input
+      type="text"
+      name="produto"
+      class="form-control"
+      placeholder="Digite o nome do produto"
+      value="{{ escolha_produto }}"
+    />
   </div>
   <div class="col-md-4 align-self-end">
     <button class="btn btn-primary">Filtrar</button>
   </div>
 </form>
+
+<p class="text-muted mb-4">
+  Preço coletado em {{ data_ultima_coleta }}. O valor pode ter sofrido alterações.
+</p>
 
 {% if resultados %}
   <div class="row">
