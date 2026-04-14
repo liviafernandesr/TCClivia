@@ -220,33 +220,20 @@ def _normalizar_texto(texto: str) -> str:
 
 
 def _formatar_data_ultima_coleta() -> str:
-    """Retorna a data/hora da coleta mais recente entre os principais CSVs."""
-    padroes = [
-        "data/comparacoes/comparacao_categorias_MASTER_*.csv",
-        "data/resultados_amazon/mais_vendidos_amazon_SAMPLE_*.csv",
-        "data/resultados_ml/mais_vendidos_ml_SAMPLE_*.csv",
-        "data/resultados_amazon/mais_vendidos_amazon_FULL_*.csv",
-        "data/resultados_ml/mais_vendidos_ml_FULL_*.csv",
-    ]
+    """Retorna a data/hora do ultimo arquivo MASTER de comparacao."""
+    arq_master = arquivo_mais_recente("data/comparacoes/comparacao_categorias_MASTER_*.csv")
 
-    candidatos = []
-    for padrao in padroes:
-        arq = arquivo_mais_recente(padrao)
-        if arq:
-            candidatos.append(arq)
-
-    if not candidatos:
+    if not arq_master:
         return "data indisponível"
 
-    arq_mais_recente = max(candidatos, key=lambda p: os.path.getctime(p))
-    nome = os.path.basename(arq_mais_recente)
+    nome = os.path.basename(arq_master)
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})", nome)
     if m:
         ano, mes, dia, hora, minuto = m.groups()
         return f"{dia}/{mes}/{ano} {hora}:{minuto}"
 
     try:
-        ts = os.path.getctime(arq_mais_recente)
+        ts = os.path.getctime(arq_master)
         return time.strftime("%d/%m/%Y %H:%M", time.localtime(ts))
     except Exception:
         return "data indisponível"

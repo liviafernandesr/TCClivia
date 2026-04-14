@@ -4,7 +4,7 @@
 <h1 class="hero-title">Busca de Produtos</h1>
 <form method="get" class="row g-3 mb-4">
   <div class="col-md-4">
-    <label class="form-label">Categoria (Amazon)</label>
+    <label class="form-label">Categoria</label>
     <select name="categoria" class="form-select">
       {% for cat in categorias %}
       <option value="{{cat}}" {% if escolha_categoria == cat %}selected{% endif %}>{{cat}}</option>
